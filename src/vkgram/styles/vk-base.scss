@@ -1413,7 +1413,12 @@ html:not(.is-vkgram):not(.vkgram-off) body > #auth-pages {
 // * Блок стоит после базового `.vk-page`, чтобы перекрыть его потоковые правила.
 @media (max-width: 600px) {
   .vkgram {
+    // * 100% — это малый вьюпорт (svh): в standalone iOS оболочка не дотягивается
+    // * до «ушка» домашнего индикатора, снизу остаётся серая полоса фона.
+    // * 100dvh — видимая высота экрана, оболочка доходит до самого низа
+    // * (нижнее меню уже паддится на env(safe-area-inset-bottom)).
     height: 100%;
+    height: 100dvh;
     min-height: 0;
     overflow: hidden;
   }
@@ -12419,6 +12424,130 @@ html.is-vkgram {
       background-color: $vk-blue;
       border-color: $vk-blue;
     }
+  }
+}
+
+
+// * «Переслать» (`VKForwardModal`): the chats picker's rows and check column,
+// * plus the search window's strip of the recent chats (a picked circle of the
+// * strip gets a ring and a corner check) and the topics of an expanded forum.
+
+.vkgram {
+  .vk-forward-strip-block {
+    margin-top: $vk-gap-small;
+  }
+
+  .vk-forward-strip-item {
+    .vk-forward-strip-avatar {
+      position: relative;
+    }
+
+    // a picked recent chat: the quiet blue of a chosen row plus a ring round the avatar
+    &.is-picked {
+      background-color: rgba(89, 125, 163, .12);
+
+      .vk-peer-avatar {
+        outline: 2px solid $vk-blue;
+        outline-offset: 1px;
+      }
+    }
+  }
+
+  .vk-forward-strip-check {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background-color: $vk-blue;
+    color: #fff;
+    pointer-events: none;
+  }
+
+  .vk-forward-count {
+    margin: $vk-gap-small 0 0;
+  }
+
+  .vk-forward-list {
+    max-height: 340px;
+    margin-top: $vk-gap-small;
+    overflow-y: auto;
+  }
+
+  // the arrow of a forum row turns as the topics unfold under it
+  .vk-forward-chevron {
+    flex: none;
+    color: $vk-text-secondary;
+    transition: transform .15s ease;
+
+    .vk-picker-row.is-expanded & {
+      transform: rotate(90deg);
+    }
+  }
+
+  // the topics of the expanded forum: the same rows, one avatar deeper
+  .vk-forward-topics {
+    margin: 0;
+    padding: 0 0 4px 24px;
+    list-style: none;
+
+    li + li {
+      border-top: 1px solid $vk-divider;
+    }
+  }
+
+  .vk-forward-topic {
+    padding: 6px 4px;
+  }
+
+  .vk-forward-topic-fallback,
+  .vk-forward-topic-live {
+    flex: none;
+    width: 28px;
+    height: 28px;
+  }
+
+  // «Общие» without a live topic: a quiet circle with a chat glyph instead of an icon
+  .vk-forward-topic-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background-color: $vk-accent-soft;
+    color: $vk-text-secondary;
+  }
+
+  .vk-forward-topic-live {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    .topic-icon {
+      width: 28px;
+      height: 28px;
+      margin: 0;
+    }
+  }
+
+  .vk-forward-topics-hint {
+    padding: 6px 4px;
+    color: $vk-text-secondary;
+    font-size: 11px;
+  }
+
+  .vk-forward-more {
+    display: block;
+    margin: $vk-gap-small auto 0;
+  }
+
+  .vk-forward-comment {
+    margin-top: $vk-gap-small;
   }
 }
 

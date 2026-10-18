@@ -1,18 +1,12 @@
 import {createMemo, createSignal, For, onCleanup, Show} from 'solid-js';
-import type {Dialog} from '@lib/appManagers/appMessagesManager';
 import type {User, Chat} from '@layer';
-import rootScope from '@lib/rootScope';
-import {FOLDER_ID_ALL} from '@appManagers/constants';
-import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
-import {isDialog} from '@appManagers/utils/dialogs/isDialog';
 import {usePeers} from '@stores/peers';
 import {AvatarNewTsx} from '@components/avatarNew';
 import VKIcon from '@/vkgram/components/VKIcons';
 import VKModal from '@/vkgram/components/VKModal';
+import createDialogPages from '@/vkgram/hooks/createDialogPages';
 
 type AnyPeer = User.user | Exclude<Chat, Chat.chatEmpty>;
-
-const PAGE_LIMIT = 100;
 
 const peerTitle = (peer: AnyPeer | undefined) => {
   if(!peer) return '';
@@ -36,48 +30,12 @@ export default function VKChatsPickerModal(props: {
   onClose: () => void
 }) {
   const peers = usePeers();
-  const [dialogs, setDialogs] = createSignal<Dialog[]>([]);
-  const [loading, setLoading] = createSignal(true);
   const [query, setQuery] = createSignal('');
   const [chosen, setChosen] = createSignal<Set<PeerId>>(new Set(props.selected ?? []));
 
-  let offsetIndex: number | undefined;
-  let isEnd = false;
-  let alive = true;
-  const loadPage = async() => {
-    if(!alive || isEnd) return;
-    setLoading(true);
-    try {
-      const result = await rootScope.managers.dialogsStorage.getDialogs({
-        filterId: FOLDER_ID_ALL,
-        offsetIndex,
-        limit: PAGE_LIMIT,
-        skipMigrated: true
-      });
-      if(!alive) return;
-      const page = result.dialogs.filter(isDialog) as Dialog[];
-      setDialogs((prev) => {
-        const seen = new Set(prev.map((dialog) => dialog.peerId));
-        return prev.concat(page.filter((dialog) => !seen.has(dialog.peerId)));
-      });
-      // the next page starts at the smallest dialog index of this page, the way
-      // the chat list itself pages through the folder
-      const nextOffset = page.reduce((min, dialog) => {
-        const index = getDialogIndex(dialog);
-        return index !== undefined && index < min ? index : min;
-      }, offsetIndex ?? Infinity);
-      isEnd = !page.length || nextOffset === Infinity || nextOffset === offsetIndex ||
-        (result.isEnd && page.length < PAGE_LIMIT);
-      if(!isEnd) offsetIndex = nextOffset;
-    } catch(err) {
-      console.error('VKgram: getDialogs failed', err);
-      isEnd = true;
-    } finally {
-      if(alive) setLoading(false);
-    }
-  };
-  loadPage();
-  onCleanup(() => { alive = false; });
+  const queryLower = () => query().trim().toLowerCase();
+  const {dialogs, loading, loadPage, canLoadMore, dispose} = createDialogPages(queryLower);
+  onCleanup(dispose);
 
   const titleOf = (peerId: PeerId) => {
     const peer = peers[peerId] as AnyPeer | undefined;
@@ -88,15 +46,12 @@ export default function VKChatsPickerModal(props: {
     return peer.title;
   };
 
-  const queryLower = () => query().trim().toLowerCase();
   const filtered = createMemo(() => {
     const q = queryLower();
     const list = dialogs();
     if(!q) return list;
     return list.filter((dialog) => titleOf(dialog.peerId).toLowerCase().includes(q));
   });
-  // a search that found nothing in the loaded pages may still find more deeper in the folder
-  const canLoadMore = () => !isEnd && (!!queryLower() || loading() || dialogs().length > 0);
 
   const toggle = (peerId: PeerId) => {
     setChosen((prev) => {

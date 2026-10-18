@@ -61,8 +61,8 @@ async function forwardSelected() {
   }
   for(const mids of Object.values(byPeer)) mids.sort((a, b) => a - b);
 
-  const {default: showForwardPopup} = await import('@components/popups/forward');
-  showForwardPopup(byPeer);
+  const {openVKForwardPopup} = await import('@/vkgram/components/VKForwardModal');
+  openVKForwardPopup(byPeer);
   clearSelection();
 }
 

@@ -2,9 +2,10 @@ import type {Message} from '@layer';
 import rootScope from '@lib/rootScope';
 
 /**
- * «Переслать» for a post (an album is several messages): Web K's own forward
- * popup — the one the chat's menu opens, with the list of chats, the search,
- * folders, «Скрыть автора» and the comment field. VKgram only says what to forward.
+ * «Переслать» for a post (an album is several messages): VKgram's own window
+ * (`VKForwardModal`) — the recent chats strip of the search window, the list of
+ * dialogs with the search, the topics of a forum and an optional comment.
+ * VKgram only says what to forward; the window sends it itself.
  */
 
 // a channel with «Ограничить сохранение контента» (and the like) cannot be forwarded: Web K says so
@@ -14,6 +15,11 @@ export async function canForwardPost(messages: Message.message[]) {
 }
 
 export async function openForwardPopup(messages: Message.message[]) {
-  const {default: showForwardPopup} = await import('@components/popups/forward');
-  showForwardPopup({[messages[0].peerId]: messages.map((message) => message.mid)});
+  const byPeer: {[fromPeerId: PeerId]: number[]} = {};
+  for(const message of messages) {
+    (byPeer[message.peerId] ??= []).push(message.mid);
+  }
+
+  const {openVKForwardPopup} = await import('@/vkgram/components/VKForwardModal');
+  openVKForwardPopup(byPeer);
 }
