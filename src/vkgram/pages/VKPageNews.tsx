@@ -245,7 +245,7 @@ export default function VKPageNews() {
 
             {/* live posts wait behind this button instead of jumping into the feed above where the user reads */}
             <Show when={feed.pendingCount() > 0}>
-              <button type="button" class="vk-button vk-news-pending" onClick={showPendingPosts}>
+              <button type="button" class="vk-button vk-button-secondary vk-news-pending" onClick={showPendingPosts}>
                 <VKIcon name="up" size={14} />
                 Показать новые посты
               </button>
