@@ -8,7 +8,9 @@
 import type {TransportType} from '@lib/mtproto/dcConfigurator';
 
 const Modes = {
-  test: location.search.indexOf('test=1') > 0/*  || true */,
+  // * or a preview whose account lives on the test DCs (VITE_TEST_DC, from its seed - see
+  // * vite.preview.config.ts), so that no link to it needs ?test=1 to work
+  test: location.search.indexOf('test=1') > 0 || !!import.meta.env.VITE_TEST_DC,
   debug: location.search.indexOf('debug=1') > 0,
   // Preview-only QA override: exercise the non-contact link gate even when
   // the server does not expose report_spam / block_contact for the peer.
@@ -44,7 +46,12 @@ const Modes = {
   // bound to the stored permanent one (auth.bindTempAuthKey), replaced once it
   // expires or the server forgets it. Off by default; ?pfs=1 turns it on (the
   // worker sees it too — makeWorkerURL forwards query params).
-  pfs: location.search.indexOf('pfs=1') > 0
+  pfs: location.search.indexOf('pfs=1') > 0,
+  // The keyboard and screen-reader layer: focus traps, roving tab stops, focus
+  // rings, key routing, inert off-screen columns, pinch zoom. Off by default
+  // until it settles; ?a11y=1 turns it on. ARIA names and roles stay either way,
+  // since nobody without assistive technology can tell they are there.
+  a11y: location.search.indexOf('a11y=1') > 0
 };
 
 if(import.meta.env.VITE_MTPROTO_HAS_HTTP) {

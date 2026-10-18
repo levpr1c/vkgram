@@ -18,6 +18,7 @@ vi.mock('@helpers/dom/createContextMenu', () => ({
 import RadioFieldTsx from '@components/radioFieldTsx';
 import CheckboxFieldTsx from '@components/checkboxFieldTsx';
 import Row from '@components/rowTsx';
+import '@/tests/helpers/a11yLayer';
 
 describe('Row.RadioField interaction', () => {
   let dispose: VoidFunction;
@@ -46,6 +47,31 @@ describe('Row.RadioField interaction', () => {
     expect(open).toHaveBeenCalledOnce();
     (row.querySelector('button') as HTMLButtonElement).click();
     expect(remove).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledOnce();
+  });
+
+  // a weekday of the business-hours schedule: the row opens the day, its switch turns it on
+  it('keeps the primary action reachable beside a toggle of its own in the right column', () => {
+    const open = vi.fn();
+    const onChange = vi.fn();
+    dispose = render(() => (
+      <Row clickable={open} noRipple>
+        <Row.Title>Saturday</Row.Title>
+        <Row.RightContent onClick={(event) => event.stopPropagation()}>
+          <CheckboxFieldTsx checked={false} toggle onChange={onChange} />
+        </Row.RightContent>
+      </Row>
+    ), document.body);
+    const row = document.querySelector('.row');
+    const title = row.querySelector<HTMLElement>('.row-title');
+    const input = row.querySelector('input');
+    expect(row.tagName).toBe('DIV');
+    expect(title.getAttribute('role')).toBe('button');
+    title.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
+    expect(open).toHaveBeenCalledOnce();
+    input.click();
+    expect(input.checked).toBe(true);
+    expect(onChange).toHaveBeenCalledWith(true);
     expect(open).toHaveBeenCalledOnce();
   });
 

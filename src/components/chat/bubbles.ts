@@ -49,7 +49,7 @@ import reflowScrollableElement from '@helpers/dom/reflowScrollableElement';
 import setInnerHTML, {setDirection} from '@helpers/dom/setInnerHTML';
 import highlightText, {findTextRect, TextHighlightMatch} from '@helpers/dom/textHighlight';
 import whichChild from '@helpers/dom/whichChild';
-import {animateSingle, cancelAnimationByKey} from '@helpers/animation';
+import {animateSingle, cancelAnimationByKey, getAnimationInstance} from '@helpers/animation';
 import assumeType from '@helpers/assumeType';
 import debounce, {DebounceReturnType} from '@helpers/schedulers/debounce';
 import windowSize from '@helpers/windowSize';
@@ -92,7 +92,7 @@ import {MESSAGE_LINK_ENTITY_SELECTOR} from '@lib/richTextProcessor/filterDisable
 import wrapMessageActionTextNew from '@components/wrappers/messageActionTextNew';
 import isMentionUnread from '@appManagers/utils/messages/isMentionUnread';
 import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
-import {getPeerColorIndexByPeer} from '@appManagers/utils/peers/getPeerColorById';
+import {getFakeUserIdForJustName, getPeerColorIndexById, getPeerColorIndexByPeer} from '@appManagers/utils/peers/getPeerColorById';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import {AppManagers} from '@lib/managers';
 import idleController from '@helpers/idleController';
@@ -109,7 +109,8 @@ import paymentsWrapCurrencyAmount, {GRAM_CURRENCY_SYMBOL, formatNanoton, nanoton
 import {createPaymentPopup} from '@components/popups/payment';
 import isInDOM from '@helpers/dom/isInDOM';
 import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
-import attachStickerViewerListeners from '@components/stickerViewer';
+import attachMediaPeekListeners, {getMediaPeekDocSource, getMessageMediaPeekSource} from '@components/mediaPeek';
+import {findRegisteredMediaPeekElement, getRegisteredMediaPeekSource} from '@components/mediaPeek/sources';
 import {makeMediaSize, MediaSize} from '@helpers/mediaSize';
 import wrapSticker from '@components/wrappers/sticker';
 import computeStickerSetPreviewGrid from '@helpers/stickerSetPreviewGrid';
@@ -125,8 +126,7 @@ import toHHMMSS from '@helpers/string/toHHMMSS';
 import {BatchProcessor} from '@helpers/sortedList';
 import wrapUrl from '@lib/richTextProcessor/wrapUrl';
 import getMessageThreadId from '@appManagers/utils/messages/getMessageThreadId';
-import wrapMediaSpoiler, {onMediaSpoilerClick} from '@components/wrappers/mediaSpoiler';
-import {copyTextToClipboard} from '@helpers/clipboard';
+import wrapMediaSpoiler, {hasMediaSpoiler, onMediaSpoilerClick} from '@components/wrappers/mediaSpoiler';
 import liteMode from '@helpers/liteMode';
 import getSelectionElementFromTarget from '@components/chat/getSelectionElementFromTarget';
 import getMediaDurationFromMessage from '@appManagers/utils/messages/getMediaDurationFromMessage';
@@ -180,7 +180,12 @@ import numberThousandSplitter, {numberThousandSplitterForStars} from '@helpers/n
 import wrapGeo from '@components/wrappers/geo';
 import safePlay from '@helpers/dom/safePlay';
 import flatten from '@helpers/array/flatten';
-import WebPageBox from '@components/wrappers/webPage';
+import WebPageBox, {WebPageFooterButton} from '@components/wrappers/webPage';
+import {makeContactPhoneFormatter} from '@components/wrappers/formatUserPhone';
+import parseVcard, {isVcardPhoneType} from '@helpers/parseVcard';
+import showContactDetailsPopup from '@components/popups/contactDetails';
+import {copyPhoneNumber} from '@helpers/copyContact';
+import showCreateContactPopup from '@components/popups/createContact';
 import wrapPeerColorPattern from '@components/wrappers/peerColorPattern';
 import showTooltip from '@components/tooltip';
 import wrapTextWithEntities from '@lib/richTextProcessor/wrapTextWithEntities';
@@ -249,7 +254,8 @@ import compareUint8Arrays from '@helpers/bytes/compareUint8Arrays';
 import {linkToPollOption} from './bubbleParts/pollMessageContent/pollToOptionLink';
 import {getSimulatedEvent} from '@helpers/dom/dispatchEvent';
 import {richMessageToPage} from '@lib/richMessage';
-import {RichMessageBubble} from '@components/chat/bubbles/richMessage';
+import {RichMessageBubble, isRichMessageButtonTarget, isRichMessageTarget} from '@components/chat/bubbles/richMessage';
+import {isPagingSlideshowTarget} from '@components/slideshow';
 import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
 import isAnchoredEphemeralMessage from '@appManagers/utils/messages/isAnchoredEphemeralMessage';
 import canReplyToEphemeralMessage from '@appManagers/utils/messages/canReplyToEphemeralMessage';
@@ -268,6 +274,7 @@ import {
 } from '@components/chat/bubbleParts/solidMessageShell';
 import useReducedMotion from '@stores/reducedMotion';
 import wheelDeltaToPixels from '@helpers/dom/wheelDeltaToPixels';
+import {TEXT_LINK_ATTRIBUTE} from '@helpers/dom/linkPress';
 
 // TODO: fix new message won't be rendered if an old one is rendering in the moment
 
@@ -416,7 +423,8 @@ export function cancelPendingHiddenLinksEvent(event: Event) {
   const guardedBubble = target.closest(
     `[${HIDDEN_LINKS_PENDING_ATTRIBUTE}], [${HIDDEN_LINKS_FALLBACK_ATTRIBUTE}]`
   );
-  const navigationTarget = target.closest(`${MESSAGE_LINK_ENTITY_SELECTOR}, .webpage`);
+  // a shared contact is a web-page box too, but no link: it stays usable where links are held back
+  const navigationTarget = target.closest(`${MESSAGE_LINK_ENTITY_SELECTOR}, .webpage:not(.is-contact)`);
   if(!guardedBubble || !navigationTarget || !guardedBubble.contains(navigationTarget)) {
     return false;
   }
@@ -642,6 +650,13 @@ function getBubbleFullMid(bubble: HTMLElement) {
   return makeFullMid(bubble.dataset.peerId.toPeerId(), +bubble.dataset.mid);
 }
 
+// * the message a media item of a bubble shows: an item of grouped messages names its own, an item of
+// * one message's album (paid media) is an index into the bubble's
+function getGroupedItemFullMid(bubble: HTMLElement, groupedItem: HTMLElement) {
+  const index = groupedItem ? +(groupedItem.dataset.index ?? -1) : -1;
+  return {fullMid: getBubbleFullMid(index !== -1 ? bubble : groupedItem || bubble), index};
+}
+
 const EMPTY_FULL_MID = makeFullMid(NULL_PEER_ID, 0);
 
 const SimulatedClickSymbol = Symbol('simulatedClick');
@@ -737,6 +752,7 @@ export default class ChatBubbles {
   private messageLinkPolicyStates = new Set<MessageLinkPolicyState>();
   private hiddenLinksPendingBubbles = new Set<HTMLElement>();
   private pendingSolidMessageBodyLayouts = new Set<SolidMessageBodyEntry>();
+  private laidOutSolidMessageBodies = new WeakSet<SolidMessageBodyEntry>();
   private solidMessageBodyLayoutFrame: {win: Window, id: number};
   private spoilerOverlayPromises = new WeakMap<HTMLElement, Promise<void>>();
 
@@ -1588,13 +1604,21 @@ export default class ChatBubbles {
     !DO_NOT_UPDATE_MESSAGE_REPLY && this.listenerSetter.add(rootScope)('messages_downloaded', this.updateMessageReply);
     !DO_NOT_UPDATE_MESSAGE_REPLY && this.listenerSetter.add(rootScope)('stories_downloaded', this.updateMessageReply);
 
-    attachStickerViewerListeners({
+    attachMediaPeekListeners({
       listenTo: this.scrollable.container,
       listenerSetter: this.listenerSetter,
-      findTarget: (e) => {
-        const target = e.target as HTMLElement;
-        const found = target.closest('.attachment.media-sticker-wrapper, .attachment.media-gif-wrapper, .poll-option-sticker.media-sticker-wrapper') || (findUpClassName(target, 'attachment') && target.closest('.custom-emoji'));
-        return found as HTMLElement;
+      findTarget: (target) => {
+        // * a press while selecting selects
+        if(this.chat.selection.isSelecting) return;
+        const found = target.closest<HTMLElement>('.attachment.media-sticker-wrapper, .attachment.media-gif-wrapper, .poll-option-sticker.media-sticker-wrapper') ||
+          (findUpClassName(target, 'attachment') && target.closest<HTMLElement>('.custom-emoji')) ||
+          this.findMediaPeekTarget(target);
+        // * not what a spoiler hides: a GIF can have one too
+        if(found && !hasMediaSpoiler(found)) return found;
+      },
+      getSource: (element) => {
+        if(isRichMessageTarget(element)) return getRegisteredMediaPeekSource(element);
+        return element.dataset.docId ? getMediaPeekDocSource(element) : this.getMediaPeekSource(element);
       }
     });
     attachClickEvent(this.scrollable.container, this.onBubblesClick, {listenerSetter: this.listenerSetter});
@@ -1857,12 +1881,14 @@ export default class ChatBubbles {
           findUpClassName(e.target, 'attachment') ||
           findUpClassName(e.target, 'audio') ||
           findUpClassName(e.target, 'document') ||
-          findUpClassName(e.target, 'contact') ||
+          findUpClassName(e.target, 'is-contact') ||
           findUpClassName(e.target, 'time') ||
           findUpClassName(e.target, 'code-header-button') ||
           findUpClassName(e.target, 'reaction') ||
           findUpClassName(e.target, 'bubble-beside-button') ||
-          findUpClassName(e.target, 'poll-message-content')
+          findUpClassName(e.target, 'poll-message-content') ||
+          isPagingSlideshowTarget(e.target) || // * pages on every click
+          isRichMessageButtonTarget(e.target)
         ) {
           return;
         }
@@ -1907,7 +1933,8 @@ export default class ChatBubbles {
           if(!bubble ||
             bubble.classList.contains('service') ||
             bubble.classList.contains('is-sending') ||
-            !this.canReplyToBubble(bubble)) {
+            !this.canReplyToBubble(bubble) ||
+            isPagingSlideshowTarget(e.target)) { // * pages through its items instead
             return false;
           }
 
@@ -2145,7 +2172,8 @@ export default class ChatBubbles {
           this.chat.type === ChatType.Logs ||
           this.chat.selection.isSelecting ||
           !this.chat.input.canSendPlain() ||
-          childCanScrollX(e.target as HTMLElement)) {
+          childCanScrollX(e.target as HTMLElement) ||
+          isPagingSlideshowTarget(e.target)) { // * pages through its items instead
           axis = 'y'; // vertical / wrong-direction / not repliable — ignore for the rest of the gesture
           idle();
           return;
@@ -3170,7 +3198,8 @@ export default class ChatBubbles {
       return;
     }
 
-    hoverReaction = this.hoverReaction = Button('bubble-hover-reaction', {noRipple: true, ariaLabel: 'DoubleTapSetting'});
+    // A native button only with the keyboard layer: it brings the browser's button box and takes the focus on click.
+    hoverReaction = this.hoverReaction = Button('bubble-hover-reaction', {noRipple: true, ariaLabel: 'DoubleTapSetting', asDiv: !Modes.a11y});
     const middlewareHelper = hoverReaction.middlewareHelper = this.getMiddleware().create();
     const middleware = middlewareHelper.get(() => this.hoverReaction === hoverReaction);
 
@@ -3596,24 +3625,6 @@ export default class ChatBubbles {
       return;
     }
 
-    const contactDiv: HTMLElement = findUpClassName(target, 'contact');
-    if(contactDiv) {
-      const peerId = contactDiv.dataset.peerId.toPeerId();
-      if(peerId) {
-        this.chat.appImManager.setInnerPeer({
-          ...additionalSetPeerProps,
-          peerId
-        });
-      } else {
-        const phone = contactDiv.querySelector<HTMLElement>('.contact-number');
-        copyTextToClipboard(phone.innerText.replace(/\s/g, ''));
-        toastNew({langPackKey: 'PhoneCopied'});
-        cancelEvent(e);
-      }
-
-      return;
-    }
-
     const callDiv: HTMLElement = findUpClassName(target, 'bubble-call');
     if(callDiv) {
       const conferenceMsgId = +callDiv.dataset.conferenceMsgId;
@@ -3719,7 +3730,9 @@ export default class ChatBubbles {
       return;
     }
 
-    const stickerEmojiEl = findUpAttribute(target, 'data-sticker-emoji');
+    const stickerEmojiEl = isRichMessageButtonTarget(target) ?
+      undefined :
+      findUpAttribute(target, 'data-sticker-emoji');
     if(
       stickerEmojiEl &&
       stickerEmojiEl.parentElement.querySelectorAll('[data-sticker-emoji]').length === 1 &&
@@ -3805,6 +3818,12 @@ export default class ChatBubbles {
       findUpAttribute(target, 'data-saved-from') ||
       findUpAttribute(target, 'data-follow');
     if(nameDiv && nameDiv !== bubble) {
+      // * a name or a mention is a link to its peer: with Ctrl or Cmd held, the browser opens it in a
+      // * new tab (PeerTitle `link` lets that click through)
+      if(nameDiv.tagName === 'A' && (nameDiv as HTMLAnchorElement).href && ((e as MouseEvent).ctrlKey || (e as MouseEvent).metaKey)) {
+        return;
+      }
+
       target = nameDiv || target;
       const peerIdStr = target.dataset.peerId || target.getAttribute('peer') || target.dataset.key || target.dataset.follow/*  || (target as AvatarElement).peerId */;
       const savedFrom = target.dataset.savedFrom as FullMid;
@@ -4086,11 +4105,28 @@ export default class ChatBubbles {
     });
   }
 
+  // * a photo or video the media viewer would open
+  private findMediaPeekTarget(target: HTMLElement) {
+    if(this.chat.type === ChatType.Logs) return;
+    // * a rich message's media is its page's, and the page has said what it shows
+    return isRichMessageTarget(target) ?
+      findRegisteredMediaPeekElement(target) :
+      target.closest<HTMLElement>('.album-item, .attachment.media-container, .webpage-preview.media-container');
+  }
+
+  private getMediaPeekSource(element: HTMLElement) {
+    const bubble = findUpClassName(element, 'bubble');
+    if(!bubble || bubble.classList.contains('story')) return;
+    const {fullMid, index} = getGroupedItemFullMid(bubble, element.classList.contains('album-item') ? element : undefined);
+    return getMessageMediaPeekSource(fullMid && this.chat.getMessage(fullMid), index === -1 ? undefined : index);
+  }
+
   public checkTargetForMediaViewer(target: HTMLElement, e?: Event, mediaTimestamp?: number) {
     const bubble = findUpClassName(target, 'bubble');
     const documentDiv = findUpClassName(target, 'document-with-thumb');
 
-    if(this.chat.type === ChatType.Logs) return;
+    // a rich message's media is not the message's own: its page opens the viewer for it
+    if(this.chat.type === ChatType.Logs || isRichMessageTarget(target)) return;
 
     // Prevent recursive click event simulation
 
@@ -4136,8 +4172,7 @@ export default class ChatBubbles {
       }
 
       cancelEvent(e);
-      const groupedItemIndex = groupedItem ? +(groupedItem.dataset.index ?? -1) : -1;
-      const fullMessageId = getBubbleFullMid(groupedItemIndex !== -1 ? bubble : groupedItem || bubble);
+      const {fullMid: fullMessageId, index: groupedItemIndex} = getGroupedItemFullMid(bubble, groupedItem);
       let message = this.chat.getMessage(fullMessageId), isSponsored = false;
       if(!message) {
         if(splitFullMid(fullMessageId).mid < 0) {
@@ -4794,7 +4829,7 @@ export default class ChatBubbles {
     // where the arrows scroll the conversation rather than reaching the composer
     // (see `shouldPreserveKeyboardFocus`). A stop with no role and no name
     // announces nothing when it is reached, so it carries both.
-    this.scrollable.container.tabIndex = 0;
+    if(Modes.a11y) this.scrollable.container.tabIndex = 0;
     this.scrollable.container.setAttribute('role', 'region');
     this.scrollable.container.setAttribute('aria-label', I18n.format('AccDescr.MessageHistory', true));
     this.setLoaded('top', false, false);
@@ -5804,19 +5839,29 @@ export default class ChatBubbles {
     }
   }
 
-  private tryToForceStartParam(middleware: () => boolean) {
-    // start bot instantly if have messages
-    const startParam = this.chat.input.startParam;
-    if(startParam === undefined) {
+  // * settles the bot START button once the history has loaded, like iOS and Android: shown only
+  // * for a chat that turned out empty, and never a /start sent on the user's behalf, while a start
+  // * parameter from a link goes out at once when the chat already has messages. A link to the
+  // * chat that is already open (`startAtOnce`) starts it even when it is empty, as every official
+  // * client does — but not a blocked bot (tdesktop): START unblocks it on a tap
+  private settleBotStart(middleware: () => boolean, startAtOnce?: boolean) {
+    if(!this.chat.isBot) {
       return;
     }
 
+    const startParam = this.chat.input.startParam;
     this.chat.isStartButtonNeeded().then((isNeeded) => {
-      if(!middleware() || isNeeded || this.chat.input.startParam !== startParam) {
+      if(!middleware() || this.chat.input.startParam !== startParam) {
         return;
       }
 
-      this.chat.input.startBot();
+      if(startParam === undefined || startParam === BOT_START_PARAM) {
+        this.chat.input.setStartParam(isNeeded ? BOT_START_PARAM : undefined);
+      } else if(!isNeeded || (startAtOnce && !this.chat.isUserBlocked)) {
+        this.chat.input.startBot();
+      } else { // * the parameter waits for a tap on START, which an empty history only now asks for
+        this.chat.input.center(true);
+      }
     });
   }
 
@@ -5935,6 +5980,9 @@ export default class ChatBubbles {
       }
     }
 
+    // * a start parameter from a link to the bot chat that is already open (`reload` re-renders
+    // * the same chat for an in-chat search and leaves the input alone)
+    const startsBotFromLink = samePeer && sameSearch && !!startParam;
     if(startParam === undefined && await m(this.chat.isStartButtonNeeded())) {
       startParam = BOT_START_PARAM;
     }
@@ -5942,6 +5990,12 @@ export default class ChatBubbles {
     if(samePeer && sameSearch) {
       if(stack && lastMsgFullMid !== EMPTY_FULL_MID && stack.peerId === peerId) {
         this.followStack.push(makeFullMid(stack.peerId, stack.mid));
+      }
+
+      // * the input is not rebuilt for the same chat, so a start parameter has to reach it here —
+      // * also when there is no bubble to land on (an empty chat is rendered again below)
+      if(startParam !== undefined) {
+        this.chat.input.setStartParam(startParam);
       }
 
       const mounted = await m(this.getMountedBubble(lastMsgFullMid));
@@ -5977,8 +6031,7 @@ export default class ChatBubbles {
         }
 
         if(startParam !== undefined) {
-          this.chat.input.setStartParam(startParam);
-          this.tryToForceStartParam(middleware);
+          this.settleBotStart(middleware, startsBotFromLink);
         }
 
         if(options.mediaTimestamp) {
@@ -6342,7 +6395,7 @@ export default class ChatBubbles {
           });
         }
 
-        this.tryToForceStartParam(middleware);
+        this.settleBotStart(middleware, startsBotFromLink);
 
         // if(cached) {
         // this.onRenderScrollSet();
@@ -7175,7 +7228,10 @@ export default class ChatBubbles {
       (window as any)[callback](targetAnchor, event);
     }
 
-    const webPageCallback = this.webPageClickCallbacks.get(webPageContainer);
+    // * a footer button has an action of its own (a shared contact's MESSAGE / ADD)
+    const footerButton = target?.closest<HTMLElement>('.webpage-footer-button');
+    const webPageCallback = (footerButton && this.webPageClickCallbacks.get(footerButton)) ||
+      this.webPageClickCallbacks.get(webPageContainer);
     webPageCallback?.(event);
     return true;
   }
@@ -7283,7 +7339,8 @@ export default class ChatBubbles {
       // const groupedId = (message as Message.message).grouped_id;
       newBubble = document.createElement('div');
       if(isMessage(message)) {
-        newBubble.tabIndex = 0;
+        // a click on a focusable bubble takes the focus, and restoring it scrolls the chat
+        if(Modes.a11y) newBubble.tabIndex = 0;
         newBubble.setAttribute('role', 'article');
       }
       newBubble.middlewareHelper = middlewareHelper;
@@ -7703,12 +7760,21 @@ export default class ChatBubbles {
       this.solidMessageBodyLayoutFrame = undefined;
       const entries = Array.from(this.pendingSolidMessageBodyLayouts);
       this.pendingSolidMessageBodyLayouts.clear();
+      let grew = false;
       entries.forEach((entry) => {
         if(!this.isSolidMessageBodyRegistered(entry.bubble, entry)) return;
         if(hasMessageTextSpoilers(entry.controller.getSnapshot().message)) entry.ensureSpoilers?.();
         entry.updateSpoilers?.();
+        grew ||= this.laidOutSolidMessageBodies.has(entry);
+        this.laidOutSolidMessageBodies.add(entry);
       });
 
+      // Following is for a body that GROWS at the bottom — a streamed draft, late resources. A
+      // body's first layout is its bubble arriving, and whoever rendered it owns the scroll:
+      // renderNewMessage animates to the end, and a jump from here lands first and leaves that
+      // animation nothing to do, so every message of a burst snapped instead of gliding. Nor
+      // does it cut into a smooth scroll that is already on its way.
+      if(!grew || getAnimationInstance(container)) return;
       if(!this.scrolledDown || Date.now() < this.streamFollowInvalidatedUntil) return;
       if(container.scrollTop + container.clientHeight > container.scrollHeight - 120) {
         container.scrollTop = container.scrollHeight;
@@ -8450,7 +8516,7 @@ export default class ChatBubbles {
             asUpgrade: gift.isIncoming &&
               !(action._ === 'messageActionStarGift' && action.pFlags.upgraded) &&
               (gift.isUpgradedBySender || action.pFlags.prepaid_upgrade),
-            asPrepaidUpgrade: action._ === 'messageActionStarGift' && action.pFlags.upgrade_separate,
+            asPrepaidUpgrade: action._ === 'messageActionStarGift' && action.pFlags.prepaid_upgrade,
             ownerId: gift.isIncoming ? undefined : message.peerId,
             wrapStickerOptions: {
               middleware,
@@ -8892,6 +8958,7 @@ export default class ChatBubbles {
         makeSolidMessageBodySnapshot(currentMessage, 1),
         {
           middleware,
+          chat: this.chat,
           richTextOptions: getPolicy(),
           reducedMotion: useReducedMotion(),
           translation: canTranslate ? {
@@ -8982,6 +9049,7 @@ export default class ChatBubbles {
           Component: RichMessageBubble,
           props: {
             message: message as Message.message,
+            chat: this.chat,
             richMessage,
             page: richMessagePage,
             richTextOptions,
@@ -9051,7 +9119,7 @@ export default class ChatBubbles {
         forward.classList.add('bubble-beside-button', 'with-hover', 'forward');
         forward.setAttribute('role', 'button');
         forward.setAttribute('aria-label', I18n.format('Forward', true));
-        forward.tabIndex = 0;
+        if(Modes.a11y) forward.tabIndex = 0;
         forward.append(Icon('forward_filled'));
         bubbleContainer.append(forward);
         bubble.classList.add('with-beside-button');
@@ -9090,7 +9158,7 @@ export default class ChatBubbles {
       btn.classList.add('bubble-beside-button', 'summarize');
       btn.setAttribute('role', 'button');
       btn.setAttribute('aria-label', I18n.format('Summary.Title', true));
-      btn.tabIndex = 0;
+      if(Modes.a11y) btn.tabIndex = 0;
       if(hasBesideButton) btn.classList.add('bubble-beside-button--not-last');
       else container.classList.add('is-last-button');
       const size = 38;
@@ -9769,8 +9837,7 @@ export default class ChatBubbles {
                   wrapPeerColorPattern({
                     peerId: (message as Message.message).fwdFromId || message.fromId,
                     container: box,
-                    middleware,
-                    canvasClassName: 'webpage-background-canvas'
+                    middleware
                   });
                 }
               },
@@ -10085,55 +10152,16 @@ export default class ChatBubbles {
         }
 
         case 'messageMediaContact': {
-          const contact = context.messageMedia;
-          const contactDiv = document.createElement('div');
-          contactDiv.classList.add('contact');
-          contactDiv.dataset.peerId = '' + contact.user_id;
-          contactDiv.setAttribute('role', 'button');
-          contactDiv.tabIndex = 0;
-
           noAttachmentDivNeeded = true;
-
-          const contactDetails = document.createElement('div');
-          contactDetails.className = 'contact-details';
-          const contactNameDiv = document.createElement('div');
-          contactNameDiv.className = 'contact-name';
-          const fullName = [
-            contact.first_name,
-            contact.last_name
-          ].filter(Boolean).join(' ');
-          contactDiv.setAttribute('aria-label', I18n.format(contact.user_id ? 'AccDescr.OpenContact' : 'AccDescr.CopyContactPhone', true, [fullName || contact.phone_number]));
-          contactNameDiv.append(
-            fullName.trim() ? wrapEmojiText(fullName) : i18n('AttachContact')
-          );
-
-          const contactNumberDiv = document.createElement('div');
-          contactNumberDiv.className = 'contact-number';
-          let contactNumberText = 'Unknown phone number';
-          if(contact.phone_number) {
-            // group the number under the viewer's country when it carries no explicit
-            // country code, prefixing '+' only when a country code is actually present
-            const {formatted, code} = formatPhoneNumber(contact.phone_number, {defaultCountryCode: this.myCountryCode});
-            contactNumberText = (code ? '+' : '') + formatted;
-          }
-          contactNumberDiv.textContent = contactNumberText;
-
-          contactDiv.append(contactDetails);
-          contactDetails.append(contactNameDiv, contactNumberDiv);
-
-          const avatarElem = avatarNew({
-            middleware,
-            size: 54,
-            lazyLoadQueue: this.lazyLoadQueue,
-            peerId: contact.user_id.toPeerId(),
-            peerTitle: contact.user_id ? undefined : (fullName.trim() ? fullName : I18n.format('AttachContact', true)[0])
-          });
-
-          contactDiv.prepend(avatarElem.node);
-
           context.mediaRequiresMessageDiv = true;
-          bubble.classList.add('contact-message');
-          messageDiv.append(contactDiv);
+          bubble.classList.add('has-webpage', 'contact-message');
+          this.renderSharedContact({
+            contact: context.messageMedia,
+            isOut,
+            messageDiv,
+            timeSpan,
+            middleware
+          });
 
           break;
         }
@@ -10684,7 +10712,7 @@ export default class ChatBubbles {
         hideButton = buttons;
         hideButton.setAttribute('role', 'button');
         hideButton.setAttribute('aria-label', I18n.format('HideAd', true));
-        hideButton.tabIndex = 0;
+        if(Modes.a11y) hideButton.tabIndex = 0;
         hideButton.append(Icon('close'));
         buttons.classList.add('bubble-sponsored-hide');
       }
@@ -10741,6 +10769,8 @@ export default class ChatBubbles {
         titleVia = document.createElement('span');
         titleVia.innerText = '@' + (await this.managers.appPeersManager.getPeerUsername(message.viaBotId));
         titleVia.classList.add('peer-title');
+        // * starts a draft to the bot on click (onBubblesClick): no link, but pressed as one
+        titleVia.setAttribute(TEXT_LINK_ATTRIBUTE, '');
       }
 
       let isForward = !!(storyFromPeerId || fwdFromId || fwdFrom) && !showNameForVerificationCodes;
@@ -10751,6 +10781,8 @@ export default class ChatBubbles {
       if(isHidden && !fwdFromId) {
         title = document.createElement('span');
         title.classList.add('peer-title');
+        // * a hidden account: no link, a click tells it is hidden (onBubblesClick)
+        title.setAttribute(TEXT_LINK_ATTRIBUTE, '');
         setInnerHTML(title, wrapEmojiText(fwdFrom.from_name || fwdFromName));
         bubble.classList.add('hidden-profile');
       } else {
@@ -10809,7 +10841,8 @@ export default class ChatBubbles {
 
         nameDiv = document.createElement('div');
         const titlePeerId = storyFromPeerId || fwdFromId;
-        title.dataset.peerId = '' + titlePeerId;
+        // * a hidden account has none: NULL_PEER_ID, whose click tells it is hidden
+        title.dataset.peerId = '' + (titlePeerId || NULL_PEER_ID);
 
         if(
           (isRegularSaved || this.peerId === REPLIES_PEER_ID || isForwardFromChannel) &&
@@ -10869,6 +10902,8 @@ export default class ChatBubbles {
               title.classList.add('peer-title');
               title.style.color = 'var(--message-primary-color)';
               title.dataset.peerId = '' + NULL_PEER_ID;
+              // * a hidden account: no link, a click tells it is hidden (onBubblesClick)
+              title.setAttribute(TEXT_LINK_ATTRIBUTE, '');
               title.append(wrapEmojiText(fwdFromName));
             } else {
               const peerId = getPeerId(fwdFrom.saved_from_id);
@@ -10934,7 +10969,7 @@ export default class ChatBubbles {
           nameDiv.append(' ');
         }
 
-        const visitorTitle = new PeerTitle({peerId: guestChatViaFromId, onlyFirstName: true, wrapOptions}).element;
+        const visitorTitle = new PeerTitle({peerId: guestChatViaFromId, onlyFirstName: true, link: true, wrapOptions}).element;
         const span = document.createElement('span');
         span.classList.add('is-guest-chat-for');
         span.append(i18n('GuestChatFor'), ' ', visitorTitle);
@@ -11032,7 +11067,7 @@ export default class ChatBubbles {
       goto.classList.add('bubble-beside-button', 'with-hover', 'goto-original');
       goto.setAttribute('role', 'button');
       goto.setAttribute('aria-label', I18n.format('Message.Context.Goto', true));
-      goto.tabIndex = 0;
+      if(Modes.a11y) goto.tabIndex = 0;
       goto.append(Icon('arrow_next'));
       bubbleContainer.append(goto);
       bubble.dataset.savedFrom = savedFrom;
@@ -11347,6 +11382,157 @@ export default class ChatBubbles {
     }
   }
 
+  /**
+   * A shared contact, drawn as tdesktop draws it (history/view/media/history_view_contact.cpp):
+   * a web-page box in the contact's colour holding the avatar, the name and the phone, with what
+   * can be done about the contact as the box's footer buttons — MESSAGE and, for someone not yet
+   * in the contacts, ADD; VIEW CONTACT for someone who is not on Telegram but brought a vCard.
+   */
+  private renderSharedContact({
+    contact,
+    isOut,
+    messageDiv,
+    timeSpan,
+    middleware
+  }: {
+    contact: MessageMedia.messageMediaContact,
+    isOut: boolean,
+    messageDiv: HTMLElement,
+    timeSpan: HTMLElement,
+    middleware: Middleware
+  }) {
+    const {user_id: userId, phone_number: phone} = contact;
+    const peer = userId ? apiManagerProxy.getUser(userId) : undefined;
+    const user = peer?._ === 'user' ? peer : undefined;
+    const fullName = [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim();
+    // * someone not on Telegram has no colour of their own, so it comes from their name
+    const colorPeerId = (userId || getFakeUserIdForJustName(fullName)).toPeerId();
+    const vcardItems = parseVcard(contact.vcard);
+    const formatContactPhone = makeContactPhoneFormatter([user?.phone, userId && phone], this.myCountryCode);
+    const ownPhone = user?.phone || phone;
+    const phoneText = ownPhone ? formatContactPhone(ownPhone) : undefined;
+
+    // * Under the name, as iOS lists them (ChatMessageContactBubbleContentNode): every phone of the
+    // * vCard, else the message's own, then the emails and the organization — five lines at most.
+    // * A card with no name goes by its organization
+    const organization = vcardItems.find((item) => item.type === 'organization')?.value;
+    const displayName = fullName || organization;
+    const vcardPhones = vcardItems.filter((item) => isVcardPhoneType(item.type)).map((item) => formatContactPhone(item.value));
+    const infoLines = [
+      ...(vcardPhones.length ? vcardPhones : phoneText ? [phoneText] : []),
+      ...vcardItems.filter((item) => item.type === 'email').map((item) => item.value),
+      ...(organization && organization !== displayName ? [organization] : [])
+    ].slice(0, 5);
+
+    const openChat = (e: MouseEvent) => {
+      this.chat.appImManager.setInnerPeer({
+        stack: this.chat.appImManager.getStackFromElement(e.target as HTMLElement),
+        peerId: userId.toPeerId()
+      });
+    };
+    const showDetails = () => showContactDetailsPopup(vcardItems, formatContactPhone);
+    const addContact = () => showCreateContactPopup({
+      firstName: contact.first_name,
+      lastName: contact.last_name,
+      phone
+    });
+    const copyPhone = () => copyPhoneNumber(phoneText);
+
+    // * The box itself shows the vCard when there is one, as tdesktop's does; otherwise it opens
+    // * the chat, or copies the phone of someone who is not on Telegram
+    const mainCallback = vcardItems.length ? showDetails : user ? openChat : phone ? copyPhone : undefined;
+    const mainLabel = I18n.format(
+      vcardItems.length ? 'AccDescr.ContactDetails' : user ? 'AccDescr.OpenContact' : 'AccDescr.CopyContactPhone',
+      true,
+      [displayName || phoneText || '']
+    );
+
+    const footerButton = (
+      langKey: LangPackKey,
+      callback: (e: MouseEvent) => void,
+      visible?: () => boolean
+    ): WebPageFooterButton => ({
+      content: i18n(langKey),
+      ref: (element) => this.webPageClickCallbacks.set(element, callback),
+      visible
+    });
+
+    let footer: Parameters<typeof WebPageBox>[0]['footer'];
+    if(user) {
+      const buttons = [footerButton('SharedContactMessage', openChat)];
+      if(!user.pFlags.self) {
+        // * ADD goes away once they are in the contacts, and comes back if they leave them
+        const [isContact, setIsContact] = createSignal(!!user.pFlags.contact);
+        const onContactsUpdate = (updatedUserId: UserId) => {
+          if(updatedUserId !== userId) return;
+          this.managers.appUsersManager.isContact(userId).then(setIsContact);
+        };
+        rootScope.addEventListener('contacts_update', onContactsUpdate);
+        middleware.onDestroy(() => rootScope.removeEventListener('contacts_update', onContactsUpdate));
+
+        buttons.push(footerButton('SharedContactAdd', addContact, () => !isContact()));
+      }
+
+      footer = {buttons};
+    } else if(vcardItems.length) {
+      // * VIEW CONTACT does what the box does, so it is the box's caption, as INSTANT VIEW is
+      footer = {content: i18n('ViewContact')};
+    }
+
+    const avatar = avatarNew({
+      middleware,
+      size: 42,
+      lazyLoadQueue: this.lazyLoadQueue,
+      peerId: user ? colorPeerId : undefined,
+      peerTitle: user ? undefined : displayName || I18n.format('AttachContact', true),
+      peerTitleColorId: colorPeerId
+    });
+
+    createRoot((dispose) => {
+      middleware.onDestroy(dispose);
+      WebPageBox({
+        name: {content: displayName ? wrapEmojiText(displayName) : i18n('AttachContact')},
+        text: infoLines.join('\n'),
+        thumb: avatar.node,
+        footer,
+        clickable: !!mainCallback,
+        class: 'is-contact',
+        ref: (box) => {
+          if(timeSpan) timeSpan.before(box);
+          else messageDiv.append(box);
+          // * with no text, the box always heads the message: the margin a link preview gets above its text
+          messageDiv.classList.add('mt-bigger');
+
+          if(mainCallback) {
+            this.webPageClickCallbacks.set(box, mainCallback);
+            // * the row of avatar and text is the control for the box's own action: the footer
+            // * buttons sit beside it, not inside it
+            const main = box.querySelector<HTMLElement>('.webpage-with-thumb');
+            main.setAttribute('role', 'button');
+            main.setAttribute('aria-label', mainLabel);
+            if(Modes.a11y) main.tabIndex = 0;
+          }
+
+          // * in the contact's colour, an outgoing one in the bubble's own with the contact's stripes
+          setPeerColorToElement({
+            peerId: colorPeerId,
+            element: box,
+            colorAsOut: isOut,
+            color: user ? undefined : {_: 'peerColor', color: getPeerColorIndexById(colorPeerId)}
+          });
+
+          if(user) {
+            wrapPeerColorPattern({
+              peerId: colorPeerId,
+              container: box,
+              middleware
+            });
+          }
+        }
+      });
+    });
+  }
+
   private wrapSomeSolid(func: () => JSX.Element, container: HTMLElement, middleware: Middleware) {
     const dispose = render(func, container);
     middleware.onClean(dispose);
@@ -11437,9 +11623,11 @@ export default class ChatBubbles {
     }
 
     return {
+      // * a name in a message opens its peer on click (onBubblesClick)
       element: new PeerTitle({
         peerId,
         withPremiumIcon: !isForward,
+        link: true,
         wrapOptions: {
           ...wrapOptions,
           textColor: textColorProperty
@@ -12413,8 +12601,9 @@ export default class ChatBubbles {
         }
       }
 
+      // * the ladder's zoom runs with full animations only, and is waited for
       if(animate === undefined && !noTransition) {
-        animate = true;
+        animate = liteMode.isAvailable('motion');
       }
 
       if(isWaitingForAnimation || animate) {
@@ -13091,7 +13280,7 @@ export default class ChatBubbles {
 
     const waitPromise = isAdditionRender ? processPromise(resultPromise) : promise;
 
-    if(isFirstMessageRender && liteMode.isAvailable('animations')/*  && false */) {
+    if(isFirstMessageRender && liteMode.isAvailable('motion')/*  && false */) {
       let times = isAdditionRender ? 2 : 1;
       this.messagesQueueOnRenderAdditional = () => {
         this.log('messagesQueueOnRenderAdditional');
@@ -13643,8 +13832,8 @@ export default class ChatBubbles {
       isOut,
       makePeerTitle: promises ?
         (peerId) => {
-          const peerTitle = new PeerTitle;
-          promises.push(peerTitle.update({peerId}));
+          const peerTitle = new PeerTitle({peerId, link: true});
+          promises.push(peerTitle.ready);
           return peerTitle.element;
         } :
         () => document.createElement('span'),

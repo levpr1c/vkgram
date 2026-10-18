@@ -5,6 +5,7 @@ import {drawCircleFromStart} from '@helpers/canvas/drawCircle';
 import roundRect from '@helpers/canvas/roundRect';
 import Shimmer from '@helpers/canvas/shimmer';
 import customProperties from '@helpers/dom/customProperties';
+import {CROSS_FADE_KEYFRAMES} from '@helpers/dom/crossfadeContent';
 import easeInOutSine from '@helpers/easing/easeInOutSine';
 import liteMode from '@helpers/liteMode';
 import mediaSizes from '@helpers/mediaSizes';
@@ -15,6 +16,7 @@ export default class DialogsPlaceholder {
   private shimmer: Shimmer;
   private tempId: number;
   private detachTime: number;
+  private looping: boolean;
 
   private length: number;
   private dialogHeight: number;
@@ -105,8 +107,18 @@ export default class DialogsPlaceholder {
     this.availableLength = availableLength;
     this.detachTime = Date.now();
 
-    if(!liteMode.isAvailable('animations')) {
+    const animationLevel = liteMode.getAnimationLevel();
+    if(!animationLevel) {
       this.remove();
+    } else if(animationLevel === 1) {
+      // * reduced animations: the skeleton held still, and it fades out as a whole
+      // * held faded: a frame can be painted between the end and the removal
+      this.canvas.animate(CROSS_FADE_KEYFRAMES.slice().reverse(), {duration: 150, easing: 'ease-in-out', fill: 'forwards'})
+      .finished.then(() => this.remove());
+    } else if(!this.looping) {
+      // * full: its rows fade out in the frame loop, which a skeleton shown below full animations
+      // * never started
+      this.runAnimation();
     }
   }
 
@@ -219,6 +231,13 @@ export default class DialogsPlaceholder {
   }
 
   private startAnimation() {
+    this.runAnimation();
+    rootScope.addEventListener('theme_changed', this.onThemeChange);
+    mediaSizes.addEventListener('resize', this.onResize);
+  }
+
+  // * redraws without touching the subscriptions, as it runs from inside their dispatch
+  private runAnimation() {
     const {canvas, shimmer} = this;
     const tempId = ++this.tempId;
     const pattern = this.createPattern();
@@ -233,22 +252,28 @@ export default class DialogsPlaceholder {
     };
 
     this.renderFrame();
+    // * the shimmer runs with full animations only, below them the skeleton holds still
+    this.looping = liteMode.isAvailable('motion');
+    if(!this.looping) {
+      return;
+    }
+
     animate(() => {
       if(!middleware()) {
         return false;
       }
 
-      // ! should've removed the loop if animations are disabled
-      if(liteMode.isAvailable('animations')) {
-        this.renderFrame();
+      // * the level dropped: a skeleton on its way out still finishes going
+      if(!liteMode.isAvailable('motion') && !this.detachTime) {
+        this.looping = false;
+        return false;
       }
+
+      this.renderFrame();
 
       // ! tempId can be changed during renderFrame
       return middleware();
     });
-
-    rootScope.addEventListener('theme_changed', this.onThemeChange);
-    mediaSizes.addEventListener('resize', this.onResize);
   }
 
   private stopAnimation() {
@@ -258,8 +283,7 @@ export default class DialogsPlaceholder {
   }
 
   private onThemeChange = () => {
-    this.stopAnimation();
-    this.startAnimation();
+    this.runAnimation();
   };
 
   private onResize = () => {
@@ -270,8 +294,7 @@ export default class DialogsPlaceholder {
       return;
     }
 
-    this.stopAnimation();
-    this.startAnimation();
+    this.runAnimation();
   };
 
   private createPattern() {

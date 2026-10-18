@@ -233,6 +233,8 @@ export type State = {
   }>,
   // filters?: FiltersStorage['filters'], // ! DEPRECATED
   filtersArr?: FiltersStorage['filtersArr'],
+  // * `messages.dialogFilters.tags_enabled` - undefined until the server has been asked
+  filtersTagsEnabled?: boolean,
   maxSeenMsgId: number,
   stateCreatedTime: number,
   recentEmoji: string[],
@@ -526,6 +528,7 @@ export const SETTINGS_INIT: StateSettings = {
   liteMode: {
     all: false,
     animations: false,
+    motion: false,
     blur: false,
     chat: false,
     chat_background: false,

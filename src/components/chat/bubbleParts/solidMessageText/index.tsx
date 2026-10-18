@@ -2,7 +2,6 @@ import {getMiddleware, Middleware, MiddlewareHelper} from '@helpers/middleware';
 import deepEqual from '@helpers/object/deepEqual';
 import {MessageEntity, TextWithEntities} from '@layer';
 import {
-  getCommonGraphemePrefixLength,
   getGraphemeOffsets,
   snapGraphemeOffsetDown,
   updateGraphemeOffsets,
@@ -13,6 +12,7 @@ import {
   sliceTextWithEntitiesAtGraphemeBoundaries
 } from '@lib/richTextProcessor/sliceTextWithEntities';
 import wrapRichText, {WrapRichTextOptions} from '@lib/richTextProcessor/wrapRichText';
+import type CustomEmojiElement from '@lib/customEmoji/element';
 import {Accessor, batch, createEffect, createMemo, createSignal, JSX, onCleanup, onMount, Show, untrack} from 'solid-js';
 import {Dynamic, render} from 'solid-js/web';
 import {MessageTextPhase, TextRevealModel, TextRevealState} from './textRevealModel';
@@ -533,8 +533,12 @@ function getIncrementalRenderStart(
   for(const entity of [...previousEntities, ...currentEntities]) {
     const start = entity.offset || 0;
     const end = start + (entity.length || 0);
-    if(!isSplittableTextEntity(entity) && start < dirtyStart && end > dirtyStart) {
-      dirtyStart = start;
+    // A quote also owns the preceding separator's rendering. When the quote
+    // first appears during reveal, replace the previously visible newline.
+    const renderStart = entity._ === 'messageEntityBlockquote' &&
+      (previous.text[start - 1] === '\n' || current.text[start - 1] === '\n') ? start - 1 : start;
+    if(!isSplittableTextEntity(entity) && renderStart < dirtyStart && end > dirtyStart) {
+      dirtyStart = renderStart;
     }
   }
 
@@ -643,9 +647,35 @@ export function SolidInlineText(props: SolidInlineTextProps): JSX.Element {
     chunk.middlewares.forEach((middleware) => middleware.destroy());
     if(removeNodes) {
       chunk.nodes.forEach((node) => {
-        if(node.parentNode) node.remove();
+        // a custom emoji the new text took over is in its fragment already
+        if(node.parentNode === element) node.remove();
       });
     }
+  };
+
+  // The custom emoji of the text being replaced, by document, for the new text to take over
+  // (wrapRichText's reuseCustomEmojis): one that stays drawn where it was instead of a new one
+  // loading and fading in. Whatever is not taken is gone with the old text and is destroyed - it
+  // would stay in its renderer otherwise, measured on every frame for nothing.
+  const collectCustomEmojis = (nodes: ArrayLike<Node>) => {
+    const pool = new Map<DocId, CustomEmojiElement[]>();
+    const add = (emoji: CustomEmojiElement) => {
+      const list = pool.get(emoji.docId);
+      if(list) list.push(emoji);
+      else pool.set(emoji.docId, [emoji]);
+    };
+    Array.from(nodes).forEach((node) => {
+      if(node.nodeType !== Node.ELEMENT_NODE) return;
+      if((node as Element).matches('custom-emoji-element')) add(node as CustomEmojiElement);
+      (node as Element).querySelectorAll<CustomEmojiElement>('custom-emoji-element').forEach(add);
+    });
+    return pool;
+  };
+
+  const destroyLeftCustomEmojis = (pool: Map<DocId, CustomEmojiElement[]>) => {
+    pool.forEach((emojis) => emojis.forEach((emoji) => {
+      if(!emoji.isConnected) emoji.destroy();
+    }));
   };
 
   const destroyChunks = (removeNodes: boolean) => {
@@ -834,8 +864,13 @@ export function SolidInlineText(props: SolidInlineTextProps): JSX.Element {
         const wrapperIndex = chunk.nodes.indexOf(wrapper);
         if(wrapperIndex !== -1) chunk.nodes[wrapperIndex] = container;
       }
-      chunk.to = currentEnd;
-      return currentEnd;
+      // The completed quote supplies the line boundary. Consume its external
+      // separator here too, before the independently rendered suffix loses
+      // the quote context needed by wrapRichText to suppress that newline.
+      const separatorLength = currentEntity._ === 'messageEntityBlockquote' &&
+        current.text[currentEnd] === '\n' && current.text[currentEnd - 1] !== '\n' ? 1 : 0;
+      chunk.to = currentEnd + separatorLength;
+      return chunk.to;
     }
     return;
   };
@@ -844,7 +879,8 @@ export function SolidInlineText(props: SolidInlineTextProps): JSX.Element {
     value: TextWithEntities,
     from: number,
     to: number,
-    options: WrapRichTextOptions | undefined
+    options: WrapRichTextOptions | undefined,
+    reuseCustomEmojis?: Map<DocId, CustomEmojiElement[]>
   ) => {
     const sliced = sliceTextWithEntitiesAtGraphemeBoundaries(
       value.text,
@@ -861,6 +897,7 @@ export function SolidInlineText(props: SolidInlineTextProps): JSX.Element {
       entities: sliced.entities
     }, middleware, loadPromises);
     if(latestPhase !== 'final') richTextOptions.noCodeHighlight = true;
+    if(reuseCustomEmojis) richTextOptions.reuseCustomEmojis = reuseCustomEmojis;
     const fragment = wrapRichText(
       sliced.text,
       richTextOptions
@@ -1056,11 +1093,14 @@ export function SolidInlineText(props: SolidInlineTextProps): JSX.Element {
     }
 
     if(incrementalStart === undefined) {
-      const prepared = prepareChunk(value, 0, value.text.length, options);
+      const pool = collectCustomEmojis(element.childNodes);
+      const prepared = prepareChunk(value, 0, value.text.length, options, pool);
       destroyChunks(false);
       element.replaceChildren(prepared.fragment);
+      destroyLeftCustomEmojis(pool);
       renderedChunks = prepared.chunk.nodes.length || prepared.chunk.middlewares.length ? [prepared.chunk] : [];
     } else {
+      let pool: Map<DocId, CustomEmojiElement[]>, dirtyChunks: RenderedTextChunk[];
       let renderStart = incrementalStart;
       let dirtyChunkIndex: number;
       if(incrementalStart === previousValue.text.length) {
@@ -1085,11 +1125,14 @@ export function SolidInlineText(props: SolidInlineTextProps): JSX.Element {
         } else {
           renderStart = Math.min(renderStart, dirtyChunk.from);
         }
-        renderedChunks.splice(dirtyChunkIndex).forEach((chunk) => destroyChunk(chunk, true));
+        dirtyChunks = renderedChunks.splice(dirtyChunkIndex);
+        pool = collectCustomEmojis(dirtyChunks.flatMap((chunk) => chunk.nodes));
       } else if(renderStart < previousValue.text.length) {
-        const prepared = prepareChunk(value, 0, value.text.length, options);
+        const pool = collectCustomEmojis(element.childNodes);
+        const prepared = prepareChunk(value, 0, value.text.length, options, pool);
         destroyChunks(false);
         element.replaceChildren(prepared.fragment);
+        destroyLeftCustomEmojis(pool);
         renderedChunks = prepared.chunk.nodes.length || prepared.chunk.middlewares.length ? [prepared.chunk] : [];
         previousValue = value;
         previousOptions = options;
@@ -1102,11 +1145,15 @@ export function SolidInlineText(props: SolidInlineTextProps): JSX.Element {
         return;
       }
 
-      const prepared = prepareChunk(value, renderStart, value.text.length, options);
+      const prepared = prepareChunk(value, renderStart, value.text.length, options, pool);
+      // the replaced text goes once the new one has taken its custom emoji: removing one clears it
+      // (CustomEmojiElement.remove), and nothing would be left to take
+      dirtyChunks?.forEach((chunk) => destroyChunk(chunk, true));
       if(!tryMergeStaticAppend(prepared.chunk)) {
         element.append(prepared.fragment);
         if(prepared.chunk.nodes.length || prepared.chunk.middlewares.length) renderedChunks.push(prepared.chunk);
       }
+      if(pool) destroyLeftCustomEmojis(pool);
       renderMode = dirtyChunkIndex === -1 ? 'append' : 'replace';
     }
 

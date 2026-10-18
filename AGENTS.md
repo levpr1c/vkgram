@@ -35,7 +35,7 @@ pnpm lint           # oxlint on the whole repo (config: .oxlintrc.json)
 pnpm lint:fix       # Same, with auto-fix
 ```
 
-Debug query params: `?test=1` (test DCs), `?debug=1` (verbose logging), `?noSharedWorker=1` (disable shared worker), `?pfs=1` (Perfect Forward Secrecy — temporary auth keys, `src/lib/mtproto/tempAuthKeys.ts`; off by default).
+Debug query params: `?test=1` (test DCs), `?debug=1` (verbose logging), `?noSharedWorker=1` (disable shared worker), `?pfs=1` (Perfect Forward Secrecy — temporary auth keys, `src/lib/mtproto/tempAuthKeys.ts`; off by default), `?a11y=1` (the keyboard and screen-reader layer — see "Accessibility"; off by default).
 
 ### Preview
 
@@ -44,6 +44,29 @@ plain `vite`) — it mints a fresh per-preview auth + picks a free port. Flags a
 details: see the script header. `.claude/launch.json` wires it into Claude
 Code's preview pane; other agents run the script directly and open the printed
 URL with their own browser tooling.
+
+**One preview per checkout, shared through leases.** An agent runs
+`bash scripts/start-preview.sh --detach` (outside Claude Code's Bash sandbox —
+inside it the script refuses, since no other process or port is visible there).
+When a preview of the same checkout — so of the same branch — already runs in
+the same mode, it hands back that preview's URL instead of starting a second
+one; either way it returns once the preview answers. Use the URL it prints, even
+if it is not the port you asked for. The caller holds a lease on what it got —
+inside Claude Code the session does; an agent whose shell lives for one command
+sets `TWEB_PREVIEW_HOLDER=<its name>` — and `--stop` (on `--port`, or on
+everything you hold) drops yours and stops the server only when nobody else
+holds it; `--list` shows what runs and for whom.
+**Never stop a preview any other way** — not by pid, port, `pkill vite` or a tmux
+session: another session may be using it. A separate preview (another account,
+a clean origin) takes its own `--id`.
+
+**Name it by the task.** Pass `--label '<a word or two>'` saying what the
+checkout works on — not the branch name, in the language you talk to the user
+in. Several previews run at once, and the label is how the user tells them
+apart: the tab title starts with it, and a badge in the preview's bottom-left
+corner lists every running preview by label, as does `/_previews` on any of
+them. The label belongs to the checkout (`tmp/preview-label`) and outlives a
+restart; pass it again to rename.
 
 ### Popup sandbox
 
@@ -92,8 +115,11 @@ Either way every `rootScope.managers` call is answered from
 - `window.popupSandbox` (`ready` / `show` / `hide` / `list` / `open` /
   `closePopups` / `calls` / `unhandled`) drives the same registry from a script;
   `calls` and `unhandled` follow the active data source.
-  `pnpm test:popups` runs `e2e/popupSandbox.spec.ts`, which opens every story in
-  headless Chromium and fails on one that throws or never becomes visible.
+  `pnpm test:popups` runs the `e2e/popupSandbox*.spec.ts` suites in headless
+  Chromium (~50 s): `popupSandbox.spec.ts` opens every story and fails on one
+  that throws, never becomes visible or never leaves — twice, with full and
+  with reduced animations; the others drive the composer's popups.
+  `pnpm test:popups:full` adds Firefox and WebKit (~3 min).
 - `src/tests/popupSandboxCoverage.test.ts` fails when a module under
   `components/popups/` can open a popup and no story imports it, so a new popup
   cannot land without one. It also fails when a story builds its popup out of a
@@ -330,6 +356,55 @@ consciously:
 `highlightText()` from `@helpers/dom/textHighlight`** (options and modes are
 documented in the file; styles in `scss/partials/_textHighlight.scss`).
 
+### Animation levels
+
+Interface animations have three levels (`liteMode.getAnimationLevel()`): **0**
+off, **1** reduced, **2** full. Reduced is "Interface Animations" on with
+"Motion Effects" off in Power Saving, or the OS reduce-motion preference under
+`?a11y=1` (`liteMode.isMotionHeldBySystem()`; level 0 stays the switch that
+turns everything off). It follows the platforms' Reduce Motion: control feedback
+(colour, toggle knob, checkbox tick, the press highlight — a ripple that does not
+spread, only fades), fades and spinners stay, and so does something growing or
+shrinking where it stands (a block entering or leaving the flow, a section
+expanding, a field following its content) — a fade at a size that changes at
+once opens a hole before it or leaves one after. Slides and zooms become
+crossfades; what travels (a position, a reorder, a flight to a new place),
+scrolling and the window's own layout (columns, sidebars) change at once, and
+changing digits are replaced in place rather than rolled; decorative effects
+(shake, shimmer, pops, hover zooms, looping waves) go. One shift is kept on
+purpose: the bubbles stepping aside for the selection checkboxes — short, the
+user's own doing, and worse as a jump.
+
+- **JS:** `isAvailable('animations')` is level 1 and up, `isAvailable('motion')`
+  level 2. Gate movement on `motion`, growth on `animations`. Code that waits
+  for a `transitionend` or `animationend` must be gated on the same level as the
+  CSS that fires it — an event that never comes leaves things stuck at level 1.
+- **SCSS:** the body carries `animation-level-0`, or every level up to the
+  current one, so `@include animation-level(1)` is reduced and full, `(2)` full
+  only, `(0)` off only, `animation-level-below(2)` off and reduced,
+  `animation-level-only(1)` reduced alone. A fade or a size goes under `(1)`,
+  movement under `(2)`. A transition list that does both is written once, with
+  `animation-level-transition(...)`, which hands reduced the part that does not
+  move (fades, colours, sizes and margins; transforms, positions, padding and
+  font size move); an icon swapped in a button uses `animation-level-icon-in` /
+  `-out`. The mixin does not touch the states: where a hidden state is an offset
+  or a scale, neutralise it below level 2 (`transform: none`), or hiding makes it
+  jump before it fades — but only where something else (`visibility`,
+  `pointer-events`, `display`) keeps the hidden element from being clicked; one
+  that `scale(0)` alone hides is better gone at once. In a `.module.scss` use
+  the `-global` mixins (`$global: true` for the transition one): a plain
+  `animation-level(...)` gets its body class hashed and never matches.
+- **Durations:** a fade has no distance for the eye to follow, so at level 1 it
+  is short — 150–200 ms, going quicker than coming. The shared timings
+  (`--transition-standard-*`, `--ripple-duration`) shorten themselves there
+  (`base.scss`), for the growth they time as well; a fade that stands for a
+  movement keeps to that range rather than inheriting the movement's length
+  (an ambient fade of its own, a background settling, may take longer).
+- **Shared pieces already follow the levels:** `TransitionSlider` (every type
+  crossfades at level 1), `fastSmoothScroll`, `smoothScrollBehavior()`,
+  `AnimationList` (keyframes without what moves, by `reducedKeyframes`),
+  `HeightTransition`, `crossfadeContent`, the popup and menu CSS.
+
 ### Settings tabs are indexed for search
 
 Settings has a search over every screen and row, and its index is **generated
@@ -387,15 +462,78 @@ import {Message, Chat, User, InputPeer} from '@layer';
   constants, search the codebase for an existing implementation and reuse or
   extend it. Every final review must explicitly check the completed change for
   duplicated code and remove any duplication found.
+- **Every final review also checks the change's performance** — above all
+  animations and anything that touches style or layout:
+  - A forced synchronous layout — reading `offsetWidth`, `clientWidth`,
+    `getBoundingClientRect()` or `getComputedStyle()` after a DOM write, or
+    `void el.offsetLeft` to restart a transition — is fine for a one-off heavy
+    animation: a popup opening, a page switching, once per user action. It is
+    not on a hot path — a chat-list row, an incoming update, the unread counter —
+    nor in an animation that stands in many places and fires often: there every
+    read goes before any write (`sequentialDom.measure` → `mutate`), and what
+    has to be styled before its transition waits a frame instead of reflowing.
+    Read only inside `measure(cb)` and write only inside `mutate(cb)`; their
+    promise says no more than "done" — code after `await measure()` is not
+    held to the read phase, and one more `await` puts it after the writes.
+  - Animate `transform` and `opacity`. A layout property (`width`, `height`,
+    `max-width`, `top`…) relays out on every frame — keep it to the one element
+    that needs it.
+  - What every row of a list wears is paid per row: mount the animation's DOM
+    only while it moves, and skip what is out of sight, in a hidden tab, or
+    with animations off (`liteMode`).
+  - Measure rather than guess: CDP `Performance.getMetrics` (`LayoutCount`,
+    `RecalcStyleCount` and their durations) around the change, with and without
+    it, and with many items changing at once. A cost that matters gets a
+    regression check (e.g. `e2e/dialogUnreadCounter.spec.ts` counts the
+    layouts read while the counts of many rows change).
 - **After every context compaction, reread this entire `AGENTS.md` before
   continuing work.** A compacted context or summary does not replace the
   canonical instructions in this file.
+- **Heavy test suites belong to the final review only — and only those the
+  change touches.** `test:a11y`, `test:focus`, the Playwright e2e configs and a
+  full `vitest run` take a minute or more each — never run them after every
+  small change. While iterating, check the change live in the preview, or run
+  the one test file that covers it (plus `tsc` when types changed). At the
+  final review (task wrap-up, or a review is asked for) run a suite only if it
+  can observe what changed: `test:popups` / `test:a11y` /
+  `test:focus` cover the popup sandbox and the sign-in screens, their `:app`
+  variants the signed-in client, `test:editor:e2e` the composer, `test:peek:app`
+  the hold-to-peek on photos (`components/mediaPeek`). A change none
+  of them exercises (chat-only styling, a manager fix) skips them. Report what
+  ran, and what was skipped and why.
+- **Heavy runs wait their turn on a shared machine.** Every Playwright run and a
+  full `vitest run` take their workers from one budget for the whole machine —
+  75% of the CPUs, shared by every checkout and worktree
+  (`scripts/test-queue.sh`) — so suites from parallel sessions run one after
+  another instead of starving each other into timeouts. A run may print
+  `[test-queue] … waits for its turn` and sit there: start suites in the
+  background, never kill a waiting run to retry it, and see who is ahead with
+  `bash scripts/test-queue.sh`. A Playwright run narrowed to some files or
+  tests gets at most 4 workers unless `--workers` says otherwise, so a few of
+  them share the machine; vitest on a few files does not queue at all.
+  `TWEB_TEST_QUEUE=0` runs without the queue; CI never queues.
 
 ## Accessibility (a11y) is part of every UI feature
 
 **Every new or changed interface must include accessibility in its design,
 implementation, and review.** Apply the requirements below to the affected flow
 before calling the feature complete.
+
+**The layer is off by default and on with `?a11y=1` (`Modes.a11y`)** until it
+settles. With the flag off the client must look and behave as it did before the
+layer; with it on, as described below. So every addition that someone without
+assistive technology can notice goes behind `Modes.a11y`, read at call or render
+time: tab stops, `.focus()` and focus restoration, focus traps, key handlers and
+key routing, `inert`, element swaps to `<button>`, reduced motion, and focus
+rings (scope CSS with `:where(.a11y)` / `:global(:where(.a11y))`, which keeps
+specificity). ARIA names, roles and `.sr-only` text stay on either way. The shared
+helpers (`createFocusTrap`, `buttonKeyDown`, `ensureButtonSemantics`,
+`attachTabList`, `attachPickerGrid`, `handleMenuKeyDown`,
+`updateScrollRegionFocusable`, `attachClickEvent`'s keyboard click) already check
+the flag, and a control that becomes a native `<button>` only with the layer is
+an `A11yButton` (`@components/a11yButton`; imperatively `Button(..., {asDiv:
+!Modes.a11y})`). The a11y and focus suites open their pages with `?a11y=1`, and a
+unit test of the layer imports `@/tests/helpers/a11yLayer`.
 
 - **Start with native semantics.** Use buttons for actions, links for navigation,
   and native form controls where possible. Preserve label/control associations;
@@ -432,8 +570,9 @@ before calling the feature complete.
 - **Verify the affected flow in the browser preview.** Exercise opening,
   changing, submitting/cancelling, and closing with Tab/Shift+Tab, Enter/Space,
   arrows, and Escape as applicable; check focus restoration and pointer/touch
-  behavior too. Run the relevant existing accessibility checks and add focused
-  regression coverage for shared or complex interaction changes. Include
+  behavior too. Run the relevant existing accessibility checks (in the final
+  review — see Agent Workflow) and add focused regression coverage for shared
+  or complex interaction changes. Include
   responsive/PiP states when the feature supports them.
 - **Report what was actually verified.** Distinguish automated checks (including
   Axe), fixture tests, authenticated UI checks, and screen-reader testing.
@@ -470,12 +609,15 @@ Vitest config: `threads: false`, `globals: true`, jsdom environment, setup in `s
 Browser suites (Playwright):
 
 ```bash
-pnpm test:popups   # every sandbox story opens and becomes visible
+pnpm test:popups   # every sandbox story opens and becomes visible, composer popups (~50 s)
+pnpm test:popups:full  # the same in Firefox and WebKit too (~3 min)
 pnpm test:a11y     # Axe matrix, keyboard interop, contrast, media editor, stories (~2 min)
 pnpm test:a11y:full  # the same, with the story sweep in all four themes (~4 min; always on CI)
-pnpm test:focus    # keyboard focus is VISIBLE — sandbox stories + the sign-in screens
+pnpm test:focus    # keyboard focus is VISIBLE — sandbox stories + the sign-in screens (~50 s)
 pnpm test:focus:app  # the same, for the signed-in client (needs PLAYWRIGHT_BASE_URL)
 pnpm test:a11y:app   # Axe past the login screen (needs PLAYWRIGHT_BASE_URL)
+pnpm test:idle:app   # the profile sidebar goes idle once open (needs PLAYWRIGHT_BASE_URL)
+pnpm test:peek:app   # holding a photo peeks at it: chat, rich message, shared media (needs PLAYWRIGHT_BASE_URL)
 ```
 
 `test:a11y` runs against a plain unauthenticated server, so everything past the
@@ -489,6 +631,12 @@ colour does. `test:a11y:full` (`A11Y_ALL_THEMES=1`, implied on CI) sweeps all
 four — run it after touching colours or theme variables. `A11Y_THEMES=night,tinted`
 picks themes, `A11Y_STORIES=a,b` picks stories, `A11Y_WORKERS` / `A11Y_STORY_PARTS`
 tune the split, and `--project=chromium` drops the other engines (~70 s).
+`test:popups` works the same way: parallel, the story sweep split into parts
+(`POPUPS_WORKERS` / `POPUP_STORY_PARTS`), Chromium unless `POPUPS_ALL_ENGINES=1`
+(`test:popups:full`, implied on CI). So does `test:focus`, on the popup suite's
+server and port (`playwright.focus.config.ts`, so the two run one after the
+other): a part per worker but one, which the sign-in sweep takes
+(`FOCUS_WORKERS` / `FOCUS_STORY_PARTS`, `FOCUS_STORIES=a,b` picks stories).
 Playwright suites run on `vite.e2e.config.ts` — the dev server without hot
 reload, so an edit made while a suite runs no longer reloads the page under it.
 
@@ -498,14 +646,16 @@ photographs each control holding focus and again a moment after focus is
 dropped, and a pair of frames that do not differ is a control with no visible
 indicator. Reading computed styles instead does not work — a ring can live on a
 pseudo-element or a sibling, and an outline on an `opacity: 0` overlay is
-painted and invisible. Findings come with cropped before/after screenshots, so
-judge them by eye rather than trusting the heuristic. The signed-in half needs
+painted and invisible. It waits for nothing by the clock: each stop runs the
+transitions it set off to their end and waits for the control to hold still.
+Findings come with cropped before/after screenshots, so judge them by eye
+rather than trusting the heuristic. The signed-in half needs
 an authorized preview:
 
 ```bash
-bash scripts/start-preview.sh --port 9105
-PLAYWRIGHT_BASE_URL=http://localhost:9105 pnpm test:focus:app
-PLAYWRIGHT_BASE_URL=http://localhost:9105 pnpm test:a11y:app
+bash scripts/start-preview.sh --detach    # prints the URL, say http://localhost:9001
+PLAYWRIGHT_BASE_URL=http://localhost:9001 pnpm test:focus:app
+PLAYWRIGHT_BASE_URL=http://localhost:9001 pnpm test:a11y:app
 ```
 
 ## Agents & shared tooling
@@ -526,7 +676,7 @@ integration only points at them:
 - **Tool-name mapping** — skill/command texts may name Claude Code tools.
   Substitute your agent's equivalent: "Agent tool" / "subagent" / `Explore`
   → spawn a sub-task or do the search inline; browser-pane `preview_start`
-  → run `bash scripts/start-preview.sh` and open the printed URL;
+  → run `bash scripts/start-preview.sh --detach` and open the printed URL;
   `AskUserQuestion` → ask in chat.
 - `.claude/launch.json` (preview servers) and `.claude/settings.local.json`
   (permissions) are Claude-Code-specific; the Codex counterpart is
@@ -543,11 +693,3 @@ for c in planner task refactor-popup-procedural; do
   ln -sfn "$(pwd)/.claude/commands/$c.md" ~/.codex/prompts/$c.md
 done
 ```
-
-<!-- rtk-instructions v2 -->
-## RTK — token-optimized commands
-
-Prefix every shell command with `rtk`, including each command inside `&&`
-chains: `rtk git add . && rtk git commit -m "msg"`. RTK applies a filter when it
-has one, otherwise passes through unchanged — so it is always safe.
-<!-- /rtk-instructions -->

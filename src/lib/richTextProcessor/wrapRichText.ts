@@ -21,18 +21,21 @@ import CustomEmojiElement, {CustomEmojiElements} from '@lib/customEmoji/element'
 import {CustomEmojiRendererElementOptions, CustomEmojiRendererElement} from '@lib/customEmoji/renderer';
 import {setDirection} from '@helpers/dom/setInnerHTML';
 import I18n, {i18n} from '@lib/langPack';
-import Icon from '@components/icon';
-import {CodeLanguageAliases, highlightCode} from '@/codeLanguages';
+import {createCodeHeaderButton} from '@helpers/dom/codeBlockClick';
+import {CodeLanguageAliases, highlightCode, highlightCodeAuto} from '@/codeLanguages';
 import callbackify from '@helpers/callbackify';
 import findIndexFrom from '@helpers/array/findIndexFrom';
 import {observeResize} from '@components/resizeObserver';
 import DotRenderer from '@components/dotRenderer';
+import Icon from '@components/icon';
 import isSuspiciousUrl from '@helpers/string/isSuspiciousUrl';
 import {createRoot, createSignal, createEffect, onCleanup} from 'solid-js';
 import formatFormattedDate from '@helpers/date/formatFormattedDate';
 import formatRelativeTime from '@helpers/date/formatRelativeTime';
 import tsNow from '@helpers/tsNow';
 import filterDisabledEntities, {markMessageLinkEntity} from '@lib/richTextProcessor/filterDisabledEntities';
+import {RICH_TEXT_BUTTON_SELECTOR, setRichTextButton} from '@lib/richTextProcessor/richTextButtons';
+import type {Middleware} from '@helpers/middleware';
 
 export type WrapRichTextOptions = Partial<{
   entities: MessageEntity[],
@@ -75,7 +78,15 @@ export type WrapRichTextOptions = Partial<{
   customWraps?: Set<HTMLElement>,
   ignoreNextIndex?: number,
   doubleLinebreak?: number
-  textColor?: WrapSomethingOptions['textColor']
+  textColor?: WrapSomethingOptions['textColor'],
+  // a rich button whose custom emoji are drawn on a canvas of its own (in the button's colour
+  // rather than the text's): that renderer, already placed in the button, or nothing for the text's
+  richButtonCustomEmojiRenderer?: (button: HTMLElement, middleware: Middleware) => CustomEmojiRendererElement | undefined,
+  // the custom emoji the text being replaced drew, by document: one of the same document on the
+  // same renderer is moved into the new text instead of a new one, already drawn - a new element
+  // loads, attaches and fades in anew, leaving its place blank for a few frames. Taken ones are
+  // removed from the lists.
+  reuseCustomEmojis?: Map<DocId, CustomEmojiElement[]>
 }> & CustomEmojiRendererElementOptions;
 
 export const ENTITY_ELEMENT_MAP: WeakMap<HTMLElement, MessageEntity> = new WeakMap();
@@ -117,9 +128,14 @@ function onQuoteResize(entry: ResizeObserverEntry) {
 export function makeQuoteCollapsable(element: HTMLElement) {
   element.classList.add('quote-like-collapsable');
 
-  const collapseIcon = document.createElement('span');
-  collapseIcon.classList.add('quote-like-icon', 'quote-like-collapse');
-  element.append(collapseIcon);
+  // A disclosure button, so the keyboard and screen readers reach it too. It only has to take
+  // the press: the host's click on the quote (`onQuoteClick`) folds and unfolds it.
+  const collapseButton = document.createElement('button');
+  collapseButton.type = 'button';
+  collapseButton.classList.add('quote-like-icon', 'quote-like-collapse');
+  collapseButton.setAttribute('aria-label', I18n.format('Chat.Quote.FullText', true));
+  collapseButton.setAttribute('aria-expanded', 'false');
+  element.append(collapseButton);
 
   return observeResize(element, onQuoteResize);
 }
@@ -182,6 +198,19 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
   const passEntities = options.passEntities ??= {};
   const contextSite = options.contextSite ??= 'Telegram';
   const contextExternal = contextSite !== 'Telegram';
+
+  // an element standing for its whole text draws the emoji parsed inside it too: passes them by
+  const skipEmojiInside = (endOffset: number) => {
+    let nextEntity = entities[nasty.i + 1];
+    while(nextEntity?._ === 'messageEntityEmoji' && nextEntity.offset < endOffset) {
+      ++nasty.i;
+      nasty.lastEntity = nextEntity;
+      nasty.usedLength += nextEntity.length;
+      nextEntity = entities[nasty.i + 1];
+    }
+
+    return nextEntity;
+  };
 
   const textLength = nasty.text.length;
   const length = entities.length;
@@ -310,12 +339,21 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
           const headerName = document.createElement('span');
           headerName.classList.add('code-header-name');
           headerName.append(languageName || i18n('CopyCode'));
-          const headerWrapButton = Icon('menu', 'code-header-button', 'code-header-toggle-wrap');
-          header.append(headerName, headerWrapButton, Icon('copy', 'code-header-button', 'code-header-copy'));
+          const headerWrapButton = createCodeHeaderButton(
+            'menu',
+            'code-header-toggle-wrap'
+          );
+          header.append(
+            headerName,
+            headerWrapButton,
+            createCodeHeaderButton('copy_alt', 'code-header-copy')
+          );
 
           container.append(header, content);
 
-          const result = !options.noCodeHighlight && languageName && highlightCode(fullEntityText, languageName);
+          const result = !options.noCodeHighlight && (languageName ?
+            highlightCode(fullEntityText, languageName) :
+            !entityLanguage ? highlightCodeAuto(fullEntityText).then((highlight) => highlight?.html) : undefined);
           result && callbackify(result, (html) => {
             if(html && (!options.middleware || options.middleware())) {
               element.innerHTML = html;
@@ -376,17 +414,44 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
         break;
       }
 
+      case 'messageEntityRichButton': {
+        element = document.createElement('span');
+        // a link button is the link it carries (the text url inside), one control rather than two
+        if(entity.button.type._ !== 'inlineButtonTypeUrl') {
+          element.setAttribute('role', 'button');
+        }
+        setRichTextButton(element, entity.button);
+        break;
+      }
+
+      // an icon drawn over the text it stands for, the way Android puts an image span over it: the
+      // text stays for a screen reader
+      case 'messageEntityIcon': {
+        nextEntity = skipEmojiInside(endOffset);
+        element = document.createElement('span');
+        const text = document.createElement('span');
+        text.className = 'sr-only';
+        text.textContent = fullEntityText;
+        element.append(Icon(entity.icon, 'inline-icon'), text);
+        usedText = true;
+        break;
+      }
+
       case 'messageEntityAnchor': {
         element = document.createElement('span');
         element.id = entity.name;
+        if((entity as MessageEntity & {richTextReference?: boolean}).richTextReference) {
+          element.classList.add('tg-reference');
+        }
         break;
       }
 
       case 'messageEntityPhone': {
         if(!(options.noLinks && !passEntities[entity._])) {
+          const target = (entity as MessageEntity & {richTextTarget?: string}).richTextTarget || fullEntityText;
           element = document.createElement('a');
           element.classList.add('phone-url');
-          (element as HTMLAnchorElement).href = encodeEntities('tel:' + fullEntityText);
+          (element as HTMLAnchorElement).href = encodeEntities('tel:' + target);
         }
         break;
       }
@@ -419,12 +484,7 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
           break;
         }
 
-        while(nextEntity?._ === 'messageEntityEmoji' && nextEntity.offset < endOffset) {
-          ++nasty.i;
-          nasty.lastEntity = nextEntity;
-          nasty.usedLength += nextEntity.length;
-          nextEntity = entities[nasty.i + 1];
-        }
+        nextEntity = skipEmojiInside(endOffset);
 
         const customEmojiElement = element = CustomEmojiElement.create(entity.document_id);
         const {docId} = customEmojiElement;
@@ -536,8 +596,8 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
       }
 
       case 'messageEntityLinebreak': {
-        // slice linebreaks before and after quote
-        if(options.ignoreNextIndex === nasty.i || (options.wrappingDraft && nextEntity?._ === 'messageEntityBlockquote' && nextEntity.offset === endOffset)) {
+        // The block boundary replaces one separator in messages and drafts.
+        if(options.ignoreNextIndex === nasty.i || (!options.noTextFormat && nextEntity?._ === 'messageEntityBlockquote' && nextEntity.offset === endOffset)) {
           usedText = true;
         } else if(options.wrappingDraft && IS_FIREFOX) {
           element = document.createElement('br');
@@ -630,8 +690,9 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
 
       case 'messageEntityEmail': {
         if(!options.noLinks && !passEntities[entity._]) {
+          const target = (entity as MessageEntity & {richTextTarget?: string}).richTextTarget || fullEntityText;
           element = document.createElement('a');
-          (element as HTMLAnchorElement).href = encodeEntities('mailto:' + fullEntityText);
+          (element as HTMLAnchorElement).href = encodeEntities('mailto:' + target);
           setBlankToAnchor(element as HTMLAnchorElement);
         }
 
@@ -839,7 +900,12 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
           }
         }
 
-        element.classList.add('quote-like', 'quote-like-border', 'quote-like-icon');
+        element.classList.add(
+          'quote-like',
+          'quote-like-border',
+          'quote-like-icon',
+          'input-collapsible-quote'
+        );
         setDirection(element);
 
         processingBlockElement = true;
@@ -998,6 +1064,16 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
     (lastElement || fragment).append(nasty.text.slice(nasty.usedLength));
   }
 
+  if(options.richButtonCustomEmojiRenderer && !options.wrappingDraft && customEmojis.size) {
+    takeRichButtonCustomEmojis(fragment, customEmojis, options);
+  }
+
+  // after the buttons took theirs: what is left goes to the text's renderer, the only one an old
+  // element can belong to
+  if(options.reuseCustomEmojis && options.customEmojiRenderer && !options.wrappingDraft && customEmojis.size) {
+    reuseCustomEmojis(customEmojis, options.reuseCustomEmojis, options.customEmojiRenderer);
+  }
+
   if((!options.wrappingDraft || options.customEmojiRenderer) && customEmojis.size) {
     let renderer = options.customEmojiRenderer;
     if(!renderer) {
@@ -1025,6 +1101,64 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
   fragment.normalize();
 
   return fragment;
+}
+
+/** Puts the old text's drawn custom emoji in place of the new text's of the same documents. */
+function reuseCustomEmojis(
+  customEmojis: Map<DocId, CustomEmojiElements>,
+  pool: Map<DocId, CustomEmojiElement[]>,
+  renderer: CustomEmojiRendererElement
+) {
+  customEmojis.forEach((elements, docId) => {
+    const candidates = pool.get(docId);
+    if(!candidates?.length) return;
+    Array.from(elements).forEach((element) => {
+      const index = candidates.findIndex((candidate) => candidate.renderer === renderer && !candidate.clean);
+      if(index === -1) return;
+      const [old] = candidates.splice(index, 1);
+      old.dataset.stickerEmoji = element.dataset.stickerEmoji;
+      old.classList.toggle('custom-emoji-custom-sized', element.classList.contains('custom-emoji-custom-sized'));
+      ['--width', '--height'].forEach((property) => {
+        const value = element.style.getPropertyValue(property);
+        if(value) old.style.setProperty(property, value);
+        else old.style.removeProperty(property);
+      });
+      element.replaceWith(old);
+      elements.delete(element);
+      elements.add(old);
+    });
+  });
+}
+
+/** Hands a rich button's custom emoji to the renderer its owner gave it, out of the text's. */
+function takeRichButtonCustomEmojis(
+  fragment: DocumentFragment,
+  customEmojis: Map<DocId, CustomEmojiElements>,
+  options: WrapRichTextOptions
+) {
+  fragment.querySelectorAll<HTMLElement>(RICH_TEXT_BUTTON_SELECTOR).forEach((button) => {
+    const elements = button.querySelectorAll<CustomEmojiElement>('custom-emoji-element');
+    if(!elements.length) return;
+    const renderer = options.richButtonCustomEmojiRenderer(button, options.middleware);
+    if(!renderer) return;
+
+    const own = new Map<DocId, CustomEmojiElements>();
+    elements.forEach((element) => {
+      const {docId} = element;
+      const set = customEmojis.get(docId);
+      set?.delete(element);
+      if(set && !set.size) customEmojis.delete(docId);
+      let ownSet = own.get(docId);
+      if(!ownSet) own.set(docId, ownSet = new Set());
+      ownSet.add(element);
+    });
+
+    const loadPromise = renderer.add({
+      addCustomEmojis: own,
+      lazyLoadQueue: options.lazyLoadQueue
+    });
+    options.loadPromises?.push(loadPromise);
+  });
 }
 
 export const createCustomFiller = (notFiller?: boolean) => {

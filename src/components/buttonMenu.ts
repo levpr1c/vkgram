@@ -1,4 +1,5 @@
 import {handleMenuKeyDown} from '@helpers/dom/menuKeyboard';
+import Modes from '@config/modes';
 import flatten from '@helpers/array/flatten';
 import contextMenuController from '@helpers/contextMenuController';
 import cancelEvent from '@helpers/dom/cancelEvent';
@@ -89,6 +90,25 @@ export function setButtonMenuItemLoading(
   }
 }
 
+/**
+ * An item that cannot act where the menu was opened stays in place, dimmed and
+ * inert, rather than disappearing: what the menu holds does not jump around.
+ */
+export function setButtonMenuItemDisabled(
+  options: ButtonMenuItemOptions,
+  disabled: boolean,
+  element = options.element
+) {
+  if(!element) return;
+  element.classList.toggle('is-disabled', disabled);
+  if(disabled) element.setAttribute('aria-disabled', 'true');
+  else element.removeAttribute('aria-disabled');
+}
+
+export function isButtonMenuItemDisabled(element: HTMLElement) {
+  return element.classList.contains('is-disabled');
+}
+
 export function ButtonMenuItem(options: ButtonMenuItemOptions) {
   if(options.element) return [options.separator as HTMLElement, options.element].filter(Boolean);
 
@@ -117,7 +137,7 @@ export function ButtonMenuItem(options: ButtonMenuItemOptions) {
   // so these are not tab-reachable until the menu is actually open.
   if(onClick || options.inner) {
     el.setAttribute('role', 'menuitem');
-    el.tabIndex = 0;
+    if(Modes.a11y) el.tabIndex = 0;
   }
 
   if(IS_MOBILE) {
@@ -190,6 +210,8 @@ export function ButtonMenuItem(options: ButtonMenuItemOptions) {
   // * cancel mobile keyboard close
   onClick && attachClickEvent(el, /* CLICK_EVENT_NAME !== 'click' || keepOpen ? */ /* async */(e) => {
     cancelEvent(e);
+    // pointer events are off, but a key press still clicks
+    if(isButtonMenuItemDisabled(el)) return;
 
     const menu = findUpClassName(e.target, 'btn-menu');
     if(menu && !menu.classList.contains('active')) {
@@ -289,8 +311,11 @@ export function ButtonMenuSync({listenerSetter, buttons, radioGroups}: {
     });
   }
 
-  const items = buttons.map(ButtonMenuItem);
-  el.append(...flatten(items));
+  // a separator stands between items: none ahead of the first one a `verify` left, nor past the last
+  const elements = flatten(buttons.map(ButtonMenuItem));
+  while(elements[0]?.tagName === 'HR') elements.shift();
+  while(elements[elements.length - 1]?.tagName === 'HR') elements.pop();
+  el.append(...elements);
 
   if(radioGroups) {
     radioGroups.forEach((group) => {
@@ -320,7 +345,58 @@ export function ButtonMenuSync({listenerSetter, buttons, radioGroups}: {
 
 
   const add = listenerSetter ? listenerSetter.add(el) : el.addEventListener.bind(el);
-  add('keydown', handleMenuKeyDown);
+  if(Modes.a11y) {
+    add('keydown', handleMenuKeyDown);
+    return el;
+  }
+
+  // Without the a11y layer: the ordinary tab model — plain action rows are tab
+  // stops activated by Enter/Space, native checkbox/radio controls own their focus.
+  buttons.forEach(({element, onClick, checkboxField}) => {
+    if(!onClick || checkboxField || !element.classList.contains('btn-menu-item')) return;
+    element.tabIndex = 0;
+  });
+
+  add('keydown', (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    const item = target.closest<HTMLElement>('.btn-menu-item');
+    const button = item && buttons.find(({element}) => element === item);
+
+    const radioInput = button?.checkboxField?.input;
+    const radioStep = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 :
+      (e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0);
+    if(
+      target === radioInput &&
+      radioInput.type === 'radio' &&
+      radioStep &&
+      button.radioGroup &&
+      button.onClick
+    ) {
+      const group = buttons.filter((candidate) =>
+        candidate.radioGroup === button.radioGroup &&
+        candidate.checkboxField?.input.type === 'radio' &&
+        candidate.checkboxField.input.name === radioInput.name &&
+        candidate.onClick
+      );
+      const index = group.indexOf(button);
+      const next = group[(index + radioStep + group.length) % group.length];
+      if(next && next !== button) {
+        cancelEvent(e);
+        next.checkboxField.input.focus();
+        simulateClickEvent(next.element);
+      }
+      return;
+    }
+
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+
+    const isActionRow = target === item && !!button?.onClick && !button.checkboxField;
+    const isNativeChoice = target === button?.checkboxField?.input && !!button.onClick;
+    if(!isActionRow && !isNativeChoice) return;
+
+    cancelEvent(e);
+    simulateClickEvent(item);
+  });
 
   return el;
 }

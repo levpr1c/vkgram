@@ -130,13 +130,13 @@ const drawMediaTarget = (sim: Sim, target: MediaTarget, dpr: number) => {
   context.clearRect(0, 0, width, height);
 
   if(!reveal) {
-    context.drawImage(sim.canvas, x, y, width, height, 0, 0, width, height);
+    drawImageFromSource(context, sim.canvas, x, y, width, height, 0, 0, width, height);
   } else {
     const progress = simpleEasing(Math.min((Date.now() - reveal.startTime) / reveal.duration, 1));
 
     // Zoom (push) the particles
     const scaledProgress = progress ** 2 /* * Math.sqrt(progress) */ * 0.5;
-    context.drawImage(sim.canvas,
+    drawImageFromSource(context, sim.canvas,
       x + reveal.coords.x * scaledProgress, y + reveal.coords.y * scaledProgress, width * (1 - scaledProgress), height * (1 - scaledProgress),
       0, 0, width, height
     );
@@ -411,7 +411,9 @@ const handleMessage = (state: PortState, message: SpoilerRendererInMessage) => {
       target.rects = message.rects;
       target.backgroundColor = message.backgroundColor;
       target.particleColor = message.particleColor;
-      target.needsRedraw = true;
+      // * drawn in this task: a resized canvas is blank, and shown so it blinked - the update comes on
+      // * every frame the message resizes (a details opening), the spoilers follow it with no gap
+      drawOverlayTarget(textSims.get(target.dpr), target);
       ensureLoop();
       break;
     }

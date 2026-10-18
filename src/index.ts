@@ -56,6 +56,7 @@ import sessionStorage from '@lib/sessionStorage';
 import replaceChildrenPolyfill from '@helpers/dom/replaceChildrenPolyfill';
 import listenForWindowPrint from '@helpers/dom/windowPrint';
 import cancelImageEvents from '@helpers/dom/cancelImageEvents';
+import listenForLinkPress from '@helpers/dom/linkPress';
 import PopupElement, {createPopup} from '@components/popups/indexTsx';
 import PasscodeLockScreenController from '@components/passcodeLock/passcodeLockScreenController'; PasscodeLockScreenController;
 import type {LangPackDifference} from '@layer';
@@ -240,6 +241,14 @@ function setSidebarLeftWidth() {
 
 function setRootClasses() {
   const add: string[] = [];
+
+  if(Modes.a11y) {
+    add.push('a11y');
+    // Pinch zoom. Not without the flag: with maximum-scale gone iOS also zooms
+    // into every field whose text is under 16px.
+    const viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    if(viewport) viewport.content = viewport.content.replace(/,(maximum-scale=1|user-scalable=no)/g, '');
+  }
 
   if(IS_EMOJI_SUPPORTED) {
     add.push('native-emoji');
@@ -432,6 +441,7 @@ if(import.meta.env.DEV) {
   setWorkerProxy; // * just to import
   listenForWindowPrint();
   cancelImageEvents();
+  listenForLinkPress();
   setRootClasses();
 
   // ?popups=1 — the popup sandbox: every popup, opened by click with mock data and no session.
@@ -443,6 +453,8 @@ if(import.meta.env.DEV) {
   if(import.meta.env.DEV && IS_POPUP_SANDBOX) {
     // the sandbox replaces the whole UI: the boot splash has nothing to cover anymore
     removeVKgramSplash();
+    // `bootstrapState` goes first, on its own: see the note at the top of that module.
+    await import('@components/popupSandbox/bootstrapState');
     const {startPopupSandbox} = await import('@components/popupSandbox');
     await startPopupSandbox();
     return;

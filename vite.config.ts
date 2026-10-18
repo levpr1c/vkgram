@@ -8,11 +8,14 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 import autoprefixer from 'autoprefixer';
 import {resolve} from 'path';
 import {existsSync, copyFileSync, readFileSync, realpathSync} from 'fs';
+import {createHash} from 'crypto';
 import {ServerOptions} from 'vite';
 import {watchLangFile} from './watch-lang.js';
 import {watchScssTypes} from './scss-types.js';
+import {vitestWorkers} from './scripts/testQueue';
 import devChecks from './scripts/dev-checks.mjs';
 import settingsSearchPlugin from './scripts/settings-search-plugin.mjs';
+import watchTransformCache from './scripts/watch-transform-cache.mjs';
 import path from 'path';
 
 const rootDir = resolve(__dirname);
@@ -30,6 +33,12 @@ if(existsSync(NODE_MODULES_PATH)) {
 }
 
 const isDEV = process.env.NODE_ENV === 'development';
+const generateDevCssModuleScopedName = (name: string, filename: string) => {
+  const relativePath = path.relative(rootDir, filename).split(path.sep).join('/');
+  const fileHash = createHash('sha1').update(relativePath).digest('hex').slice(0, 10);
+  return `_${name}_${fileHash}`;
+};
+
 if(!existsSync(LANG_PACK_LOCAL_FILE_PATH)) {
   copyFileSync(path.join(rootDir, 'src', 'langPackLocalVersion.example.ts'), LANG_PACK_LOCAL_FILE_PATH);
 }
@@ -39,11 +48,16 @@ if(isDEV) {
     copyFileSync(path.join(rootDir, '.env.local.example'), ENV_LOCAL_FILE_PATH);
   }
 
-  watchLangFile();
-  // the dev server is what runs while the SCSS is being edited, so it is what keeps the generated
-  // `*.module.d.scss.ts` in step — otherwise the editor (and `typecheck:watch`) reports a class
-  // that was just renamed as missing until someone remembers to regenerate.
-  watchScssTypes();
+  // A Playwright suite's server (TWEB_E2E) only serves the tree: the lang watcher would bump the
+  // version and run format-lang on every start, holding the start up and rewriting files under
+  // the run, and nobody edits SCSS through it.
+  if(!process.env.TWEB_E2E) {
+    watchLangFile();
+    // the dev server is what runs while the SCSS is being edited, so it is what keeps the generated
+    // `*.module.d.scss.ts` in step — otherwise the editor (and `typecheck:watch`) reports a class
+    // that was just renamed as missing until someone remembers to regenerate.
+    watchScssTypes();
+  }
 }
 
 const handlebarsPlugin = handlebars({
@@ -84,7 +98,15 @@ const serverOptions: ServerOptions = {
   host,
   port: USE_SSL ? 443 : 8080,
   fs: {
-    allow: [...SERVER_FS_ALLOW]
+    allow: [...SERVER_FS_ALLOW],
+    // Vite's defaults plus tmp/: it holds auth seeds and other credentials, and bundles that boot
+    // already authorized, while a dev server behind a proxy answers any path under the root. The dep
+    // caches some configs keep in tmp/ must stay servable, and a deny pattern can't be negated —
+    // hence the extglob.
+    deny: [
+      '.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**',
+      '**/tmp/*', '**/tmp/!(vite-preview-cache|vite-e2e-cache)/**'
+    ]
   },
   watch: {
     // NB: anchor on rootDir. A worktree checkout's own path contains
@@ -169,7 +191,8 @@ export default defineConfig({
     //   autoname: true // e.g. enable autoname
     // }),
     process.env.VITEST || process.env.TWEB_PREVIEW ? undefined : devChecks(rootDir),
-    process.env.VITEST ? undefined : settingsSearchPlugin(rootDir),
+    process.env.VITEST ? undefined : settingsSearchPlugin(),
+    watchTransformCache(),
     solidPlugin(),
     handlebarsPlugin as any,
     USE_SELF_SIGNED_CERTS ? basicSsl(BASIC_SSL_CONFIG) : undefined,
@@ -223,6 +246,8 @@ export default defineConfig({
     // otherwise, solid would be loaded twice:
     // deps: {registerNodeLoader: true},
     pool: 'forks',
+    // a full run waits for its turn in the machine-wide queue of heavy test runs (scripts/test-queue.sh)
+    maxWorkers: vitestWorkers(),
     globals: true,
     setupFiles: ['./src/tests/setup.ts']
   },
@@ -275,6 +300,12 @@ export default defineConfig({
   },
   css: {
     devSourcemap: true,
+    // Vite's default CSS Modules name hashes the entire stylesheet and its line
+    // numbers. Every SCSS edit would therefore rename all classes while
+    // imperative DOM (for example ProseMirror node views) kept the old names.
+    modules: isDEV ? {
+      generateScopedName: generateDevCssModuleScopedName
+    } : undefined,
     postcss: {
       plugins: [
         autoprefixer({}) // add options if needed

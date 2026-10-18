@@ -15,6 +15,7 @@ import ListenerSetter from '@helpers/listenerSetter';
 import showSendNowPopup from '@components/popups/sendNow';
 import appNavigationController, {NavigationItem} from '@components/appNavigationController';
 import {IS_MOBILE_SAFARI} from '@environment/userAgent';
+import Modes from '@config/modes';
 import I18n, {i18n, _i18n} from '@lib/langPack';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import blurActiveElement from '@helpers/dom/blurActiveElement';
@@ -27,6 +28,7 @@ import type AppSearchSuper from '@components/appSearchSuper';
 import isInDOM from '@helpers/dom/isInDOM';
 import {randomLong} from '@helpers/random';
 import {attachClickEvent, AttachClickOptions} from '@helpers/dom/clickEvent';
+import swallowNextClick from '@helpers/dom/swallowNextClick';
 import findUpAsChild from '@helpers/dom/findUpAsChild';
 import EventListenerBase from '@helpers/eventListenerBase';
 import safeAssign from '@helpers/object/safeAssign';
@@ -313,10 +315,8 @@ export class AppSelection extends EventListenerBase<{
 
       if(seen.size) {
         // * the click that ends a drag has to be swallowed, or whoever listens for it acts on the
-        // * element the press started on - and toggles back what the drag has just done. It lands on
-        // * the common ancestor of the press and the release rather than on either element, so
-        // * `ignoreMove` is what lets this one through the moved-since-mousedown guard
-        attachClickEvent(activeWindow, cancelEvent, {capture: true, once: true, passive: false, ignoreMove: true});
+        // * element the press started on - and toggles back what the drag has just done
+        swallowNextClick(activeWindow);
       }
 
       this.listenerSetter.removeManual(this.listenElement, 'mousemove', onMouseMove);
@@ -412,7 +412,7 @@ export class AppSelection extends EventListenerBase<{
         round: true
       });
       checkboxField.input.setAttribute('aria-label', element.getAttribute('aria-label') || element.textContent || I18n.format('Message.Context.Select', true));
-      if(element.getAttribute('role') === 'button') {
+      if(Modes.a11y && element.getAttribute('role') === 'button') {
         this.selectionRoles.set(element, {role: 'button', tabIndex: element.getAttribute('tabindex')});
         element.setAttribute('role', 'group');
         element.removeAttribute('tabindex');

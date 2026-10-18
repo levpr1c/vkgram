@@ -5,6 +5,8 @@
  */
 
 import {onAppWindowChange} from '@helpers/appWindow';
+import isLastInputPointer from '@helpers/dom/inputModality';
+import Modes from '@config/modes';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -49,6 +51,12 @@ export function getFocusableElements(container: HTMLElement) {
   .sort((a, b) => (a.tabIndex > 0 ? a.tabIndex : Infinity) - (b.tabIndex > 0 ? b.tabIndex : Infinity));
 }
 
+/**
+ * Marks an overlay that serves a control inside a trapped element but is mounted elsewhere — the
+ * formatting toolbar over a caption. Focus may move into it without the trap pulling it back.
+ */
+export const FOCUS_TRAP_ATTACHED_ATTRIBUTE = 'data-focus-trap-attached';
+
 export type FocusTrap = ReturnType<typeof createFocusTrap>;
 type FocusScope = {element: HTMLElement, restoreTo?: HTMLElement};
 const documentTraps = new WeakMap<Document, FocusScope[]>();
@@ -61,6 +69,8 @@ const documentTraps = new WeakMap<Document, FocusScope[]>();
 export default function createFocusTrap(element: HTMLElement, isActive: () => boolean = () => true) {
   let activeDocument: Document;
   let stopFollowingWindow: () => void;
+  // opened with a pointer: the focus goes back without a ring, however it is closed
+  let restoreOptions: FocusOptions;
   const token: FocusScope = {element};
   const isTopmost = () => {
     const stack = documentTraps.get(activeDocument);
@@ -73,7 +83,12 @@ export default function createFocusTrap(element: HTMLElement, isActive: () => bo
   };
 
   const onFocusIn = (event: FocusEvent) => {
-    if(isTopmost() && !element.contains(event.target as Node)) focusInside();
+    const target = event.target as Element;
+    if(
+      isTopmost() &&
+      !element.contains(target) &&
+      !target.closest?.(`[${FOCUS_TRAP_ATTACHED_ATTRIBUTE}]`)
+    ) focusInside();
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -128,9 +143,12 @@ export default function createFocusTrap(element: HTMLElement, isActive: () => bo
 
   const trap = {
     activate(restoreTo?: HTMLElement, initialFocus?: HTMLElement) {
+      // without the a11y layer nothing is trapped, focused or restored
+      if(!Modes.a11y) return;
       if(activeDocument) trap.deactivate(false);
       const doc = element.ownerDocument || document;
       token.restoreTo = restoreTo || doc.activeElement as HTMLElement;
+      restoreOptions = {preventScroll: true, ...(isLastInputPointer() && {focusVisible: false})};
       bindDocument(doc);
       stopFollowingWindow = onAppWindowChange((win, prev) => {
         if(activeDocument === prev.document) bindDocument(win.document);
@@ -159,8 +177,13 @@ export default function createFocusTrap(element: HTMLElement, isActive: () => bo
       if(index !== -1) stack.splice(index, 1);
       activeDocument?.removeEventListener('keydown', onKeyDown, true);
       activeDocument?.removeEventListener('focusin', onFocusIn);
-      if(restoreFocus && wasTopmost && token.restoreTo?.isConnected && token.restoreTo.focus) {
-        token.restoreTo.focus();
+      // As a closing <dialog> does it: only when the focus is still here to give back (an action
+      // may have sent it somewhere on purpose), and without scrolling — the opener is where it was
+      // left, and a message bubble half out of view would otherwise drag the chat along with it.
+      const focused = activeDocument?.activeElement;
+      const focusIsHere = !focused || focused === activeDocument.body || element.contains(focused);
+      if(restoreFocus && wasTopmost && focusIsHere && token.restoreTo?.isConnected && token.restoreTo.focus) {
+        token.restoreTo.focus(restoreOptions);
       }
       const parent = stack?.[stack.length - 1]?.element;
       if(restoreFocus && wasTopmost && parent) {
@@ -168,7 +191,7 @@ export default function createFocusTrap(element: HTMLElement, isActive: () => bo
         const restoreParentFocus = () => {
           const scopes = documentTraps.get(doc);
           if(scopes?.[scopes.length - 1]?.element === parent && !parent.contains(doc.activeElement)) {
-            (getFocusableElements(parent)[0] || parent).focus();
+            (getFocusableElements(parent)[0] || parent).focus(restoreOptions);
           }
         };
         restoreParentFocus();

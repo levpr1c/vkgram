@@ -26,6 +26,20 @@ defineStories('Pickers', [
     }
   },
   {
+    id: 'timePicker',
+    title: 'Time picker — business hours',
+    open: async(ctx) => {
+      const {default: showTimePickerPopup} = await import('@components/popups/timePicker');
+      showTimePickerPopup({
+        titleLangKey: 'BusinessHoursDayOpenHourPicker',
+        value: 9 * 60,
+        min: 0,
+        max: 24 * 60 - 1,
+        onPick: noop
+      });
+    }
+  },
+  {
     id: 'scheduleSending',
     title: 'Schedule message',
     open: async(ctx) => {
@@ -110,6 +124,14 @@ defineStories('Pickers', [
     }
   },
   {
+    id: 'createContact/shared',
+    title: 'New contact — from a shared contact',
+    open: async() => {
+      const {default: showCreateContactPopup} = await import('@components/popups/createContact');
+      showCreateContactPopup({firstName: 'Johnny', lastName: 'Appleseed', phone: '+1 555 010 0100'});
+    }
+  },
+  {
     id: 'createPoll',
     title: 'New poll',
     open: async(ctx) => {
@@ -119,6 +141,19 @@ defineStories('Pickers', [
       ]);
 
       openCreatePollPopup({onSubmit: noop}, HotReloadGuard);
+    }
+  },
+  {
+    id: 'createPoll/botQuiz',
+    title: 'New quiz asked for by a bot',
+    open: async(ctx) => {
+      const [{openCreatePollPopup}, {default: HotReloadGuard}] = await Promise.all([
+        import('@components/popups/createPoll'),
+        import('@lib/solidjs/hotReloadGuardProvider')
+      ]);
+
+      // a bot's `buttonTypeRequestPoll` with `quiz`: the kind of poll is fixed
+      openCreatePollPopup({quiz: true, onSubmit: noop}, HotReloadGuard);
     }
   },
   {

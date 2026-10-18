@@ -1,7 +1,8 @@
-import {For, JSX, Show} from 'solid-js';
+import {createMemo, For, JSX, Show} from 'solid-js';
 import {Dynamic} from 'solid-js/web';
 import classNames from '@helpers/string/classNames';
 import styles from '@components/genericTable.module.scss';
+import measureTableGrid from '@lib/richTextProcessor/tableGrid';
 
 export type GenericTableCell = {
   content?: JSX.Element;
@@ -25,12 +26,16 @@ export default function GenericTable(props: {
   striped?: boolean;
   class?: string;
 }) {
+  // what a rich-message table shares its width by (instantView `Table`)
+  const columns = createMemo(() => measureTableGrid(props.rows).columns);
   return (
     <div class={classNames(styles.wrapper, 'no-scrollbar')}>
       <table
+        style={{'--table-columns': columns()}}
         class={classNames(
           styles.genericTable,
           props.bordered && styles.bordered,
+          props.striped && styles.striped,
           props.class
         )}
       >
@@ -38,12 +43,9 @@ export default function GenericTable(props: {
           <div class={styles.border} />
         </Show>
         <tbody>
-          <For each={props.rows}>{(row, idx) => (
+          <For each={props.rows}>{(row) => (
             <tr
-              class={classNames(
-                styles.genericRow,
-                props.striped && !(idx() % 2) && styles.striped
-              )}
+              class={styles.genericRow}
             >
               <For each={row.cells}>{(cell) => (
                 <Dynamic

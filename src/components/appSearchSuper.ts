@@ -63,7 +63,8 @@ import SwipeHandler from '@components/swipeHandler';
 import wrapDocument from '@components/wrappers/document';
 import wrapPhoto from '@components/wrappers/photo';
 import wrapVideo from '@components/wrappers/video';
-import wrapMediaSpoiler, {hasSensitiveSpoiler, onMediaSpoilerClick} from '@components/wrappers/mediaSpoiler';
+import attachMediaPeekListeners, {getMessageMediaPeekSource} from '@components/mediaPeek';
+import wrapMediaSpoiler, {hasMediaSpoiler, hasSensitiveSpoiler, onMediaSpoilerClick} from '@components/wrappers/mediaSpoiler';
 import filterAsync from '@helpers/array/filterAsync';
 import ChatContextMenu, {getSponsoredMessageButtons} from '@components/chat/contextMenu';
 import getParticipantRank from '@appManagers/utils/chats/getParticipantRank';
@@ -791,7 +792,7 @@ export default class AppSearchSuper {
       }
 
       const peerId = target.dataset.peerId.toPeerId();
-      const message = await this.managers.appMessagesManager.getMessageByPeer(peerId, mid);
+      const message = await this.getItemMessage(target);
       if(!target.isConnected) {
         return;
       }
@@ -836,6 +837,17 @@ export default class AppSearchSuper {
       },
       {listenerSetter: this.listenerSetter}
     );
+    mediaTab?.itemsTab && attachMediaPeekListeners({
+      listenTo: mediaTab.itemsTab,
+      listenerSetter: this.listenerSetter,
+      findTarget: (target) => {
+        // * a press while selecting selects
+        if(this.selection?.isSelecting || this.mediaFilterStagingItemsTab) return;
+        const element = findUpClassName(target, 'grid-item');
+        return element && !hasMediaSpoiler(element) ? element : undefined;
+      },
+      getSource: async(element) => getMessageMediaPeekSource(await this.getItemMessage(element))
+    });
     this.tabs.inputMessagesFilterDocument && attachClickEvent(
       this.tabs.inputMessagesFilterDocument,
       onMediaClick.bind(null, 'document-with-thumb', 'media-container', 'inputMessagesFilterDocument'),
@@ -1196,6 +1208,11 @@ export default class AppSearchSuper {
 
       return {element: dialogElement.container, message};
     });
+  }
+
+  // * the message a `search-super-item` shows
+  private getItemMessage(item: HTMLElement) {
+    return this.managers.appMessagesManager.getMessageByPeer(item.dataset.peerId.toPeerId(), +item.dataset.mid);
   }
 
   private async processPhotoVideoFilter({message, promises, middleware}: ProcessSearchSuperResult) {
@@ -2300,8 +2317,9 @@ export default class AppSearchSuper {
       group.setActive();
       group.nameEl.style.display = 'none';
 
-      const SEARCH_LIMIT = 200; // will get filtered anyway
-      const {results: globalResults} = await this.managers.appUsersManager.searchContacts(this.searchContext.query, SEARCH_LIMIT);
+      // * the server returns channels only; the check below stays as a guard
+      const SEARCH_LIMIT = 200;
+      const {results: globalResults} = await this.managers.appUsersManager.searchContacts(this.searchContext.query, SEARCH_LIMIT, 'broadcasts');
       const filteredResultsWithUndefined = await Promise.all(
         globalResults.map(async(user) => await this.managers.appPeersManager.isBroadcast(user) ? user : undefined)
       );
@@ -2371,8 +2389,9 @@ export default class AppSearchSuper {
       const group = createSearchGroup({name: 'ChatList.Filter.Bots', type: 'apps', onFound: onClick, middleware});
       group.setActive();
 
-      const SEARCH_LIMIT = 200; // will get filtered anyway
-      const {results: globalResults} = await this.managers.appUsersManager.searchContacts(this.searchContext.query, SEARCH_LIMIT);
+      // * the server returns bots only; the check below stays as a guard
+      const SEARCH_LIMIT = 200;
+      const {results: globalResults} = await this.managers.appUsersManager.searchContacts(this.searchContext.query, SEARCH_LIMIT, 'bots');
       const filteredResultsWithUndefined = await Promise.all(
         globalResults.map(async(user) => await this.managers.appPeersManager.isBot(user) ? user : undefined)
       );
@@ -2786,7 +2805,6 @@ export default class AppSearchSuper {
       this.setMediaCounters({photos, videos});
     }
 
-    let firstMediaTab: SearchSuperMediaTab;
     let count = 0;
     mediaTabs.forEach((mediaTab) => {
       const counter = counters.find((c) => c.filter._ === mediaTab.inputFilter);
@@ -2798,7 +2816,6 @@ export default class AppSearchSuper {
       this.setCounter(mediaTab.type, counter.count);
 
       if(counter.count) {
-        firstMediaTab ??= mediaTab;
         ++count;
       }
     });
@@ -2839,22 +2856,8 @@ export default class AppSearchSuper {
     this.setCounter('gifts', giftsCount);
 
     if(canViewStories) {
-      firstMediaTab = storiesTab;
-
       const newTitle = i18n(peerId.isUser() ? 'Stories' : 'ProfileStories');
       storiesTab.menuTabName.replaceWith(storiesTab.menuTabName = newTitle);
-    }
-
-    if(canViewMembers) {
-      firstMediaTab = membersTab;
-    }
-
-    if(canViewSavedDialogs) {
-      firstMediaTab = savedDialogsTab;
-    }
-
-    if(showGiftsTab && !firstMediaTab) {
-      firstMediaTab = giftsTab;
     }
 
     if(maybePinnedGifts) {
@@ -2863,10 +2866,8 @@ export default class AppSearchSuper {
 
     const mainMediaTabType = getMediaTypeForProfileTab(profileTabsData.mainTab);
     this.setMainMediaTab(mainMediaTabType);
-    const mainMediaTab = this.mediaTabs.find((mediaTab) => mediaTab.type === mainMediaTabType);
-    if(mainMediaTab && !mainMediaTab.menuTab.classList.contains('hide')) {
-      firstMediaTab = mainMediaTab;
-    }
+    // * open on the first visible tab, the main one leading (tdesktop, Android)
+    const firstMediaTab = this.getFirstVisibleMediaTab();
 
     this.toggleContainerHidden(!firstMediaTab);
     if(firstMediaTab) {

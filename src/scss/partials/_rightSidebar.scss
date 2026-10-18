@@ -57,10 +57,12 @@
       width: var(--right-column-width);
     }
 
-    body.animation-level-0 &,
+    // important: the open state's own transition weighs more in the
+    // floating-left-sidebar range
+    body:not(.animation-level-2) &,
     body.resizing-left-sidebar &,
     body.resizing-right-sidebar & {
-			transition: none;
+			transition: none !important;
 		}
   }
 
@@ -126,7 +128,10 @@
   &.can-add-members {
     .btn-corner:not(.is-hidden) {
       transform: translateZ(0);
-      visibility: visible;
+
+      :where(.a11y) & {
+        visibility: visible;
+      }
     }
   }
 }

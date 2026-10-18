@@ -23,6 +23,7 @@ import rootScope from '@lib/rootScope';
 import Row from '@components/rowTsx';
 import CheckboxFieldTsx from '@components/checkboxFieldTsx';
 import Button from '@components/buttonTsx';
+import attachPlainMessageEditor from '@components/chat/inputEditor/plainField';
 import getRichValueWithCaret from '@helpers/dom/getRichValueWithCaret';
 import {PremiumGiftBubble} from '@components/chat/bubbles/premiumGift';
 import {formatMonthsDuration} from '@helpers/date';
@@ -65,9 +66,11 @@ import {createProfileGiftsStore, StarGiftsProfileActions, StarGiftsProfileStore}
 import transferStarGift from '@components/popups/transferStarGift';
 import {unwrap} from 'solid-js/store';
 import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 
 import styles from '@components/popups/sendGift.module.scss';
 import Animated from '@helpers/solid/animations';
+import smoothScrollBehavior from '@helpers/dom/smoothScrollBehavior';
 
 type GiftOption = MyStarGift | MyPremiumGiftOption;
 
@@ -132,7 +135,7 @@ function GiftOptionsPage(props: {
         <For each={props.premiumOptions}>
           {(option) => {
             return (
-              <div class={styles.premiumOption} role="button" tabindex={0} onClick={() => props.onGiftChosen(option)} onKeyDown={buttonKeyDown}>
+              <div class={styles.premiumOption} role="button" tabindex={Modes.a11y ? 0 : undefined} onClick={() => props.onGiftChosen(option)} onKeyDown={buttonKeyDown}>
                 <LottieAnimation
                   lottieLoader={lottieLoader}
                   class={styles.premiumOptionSticker}
@@ -180,7 +183,7 @@ function GiftOptionsPage(props: {
     setCategory(it as CategoryName);
 
     fastRaf(() => {
-      container.scrollTo({top: categoriesContainer.offsetTop - 56, behavior: wasPinned ? 'instant' : 'smooth'});
+      container.scrollTo({top: categoriesContainer.offsetTop - 56, behavior: wasPinned ? 'instant' : smoothScrollBehavior()});
     });
   }
 
@@ -539,7 +542,7 @@ function ResaleOptionsPage(props: {
             <div
               class={`${styles.resaleFilterChip} ${styles.resaleFilterChipSort} btn-menu-toggle`}
               role="button"
-              tabindex={0}
+              tabindex={Modes.a11y ? 0 : undefined}
               aria-haspopup="menu"
               aria-expanded={sortPopupVisible()}
               ref={(el) => {
@@ -613,7 +616,7 @@ function ResaleOptionsPage(props: {
               <div
                 class={styles.resaleFilterChip}
                 role="button"
-                tabindex={0}
+                tabindex={Modes.a11y ? 0 : undefined}
                 aria-haspopup="menu"
                 aria-expanded={modelPopupVisible()}
                 onKeyDown={buttonKeyDown}
@@ -663,7 +666,7 @@ function ResaleOptionsPage(props: {
               <div
                 class={styles.resaleFilterChip}
                 role="button"
-                tabindex={0}
+                tabindex={Modes.a11y ? 0 : undefined}
                 aria-haspopup="menu"
                 aria-expanded={backdropPopupVisible()}
                 onKeyDown={buttonKeyDown}
@@ -714,7 +717,7 @@ function ResaleOptionsPage(props: {
               <div
                 class={styles.resaleFilterChip}
                 role="button"
-                tabindex={0}
+                tabindex={Modes.a11y ? 0 : undefined}
                 aria-haspopup="menu"
                 aria-expanded={patternPopupVisible()}
                 onKeyDown={buttonKeyDown}
@@ -956,6 +959,9 @@ function ChosenGiftPage(props: {
               placeholder='StarGiftMessagePlaceholder'
               instanceRef={(input) => {
                 input.input.setAttribute('aria-label', I18n.format('StarGiftMessagePlaceholder', true))
+                // The message travels as text plus entities and holds one line.
+                const editor = attachPlainMessageEditor(input.input);
+                onCleanup(() => editor.destroy());
                 input.input.addEventListener('input', () => {
                   const value = getRichValueWithCaret(input.input, true)
                   setTextWithEntities(value.value ? {

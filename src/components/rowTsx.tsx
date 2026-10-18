@@ -21,6 +21,7 @@ import {getRowIconBackgroundImage} from '@helpers/rowIconBackground';
 import {attachHotClassName} from '@helpers/solid/classname';
 import buttonKeyDown from '@helpers/solid/buttonKeyDown';
 import labelControl from '@helpers/dom/labelControl';
+import Modes from '@config/modes';
 import {
   RADIO_FIELD_RIGHT_CLASS,
   ROW_CHECKBOX_FIELD_CLASS,
@@ -142,23 +143,29 @@ const Row = (props: {children: JSX.Element} & Partial<{
       )).filter((element) => element !== primaryTarget);
       setHasNestedControl(!!nested.length);
       // A row with a separate trailing action needs a separate primary target,
-      // rather than an interactive ancestor or a mouse-only title.
+      // rather than an interactive ancestor or a mouse-only title. A field takes the
+      // row's click itself — unless it sits in the right column, where it is that
+      // trailing action (a weekday's switch on a row that opens the day).
       const needsPrimaryTarget = !props.as && !props.role && !isCheckbox() && nested.length &&
-        title && !nested.some((element) => title.contains(element) || element.matches('input, select, textarea, [contenteditable="true"]'));
+        title && !nested.some((element) => title.contains(element) || (
+          element.matches('input, select, textarea, [contenteditable="true"]') && !element.closest('.row-right')
+        ));
       if(!needsPrimaryTarget || primaryTarget !== title) clearPrimaryTarget();
       if(needsPrimaryTarget) {
         primaryTarget = title;
         primaryTarget.setAttribute('role', 'button');
-        primaryTarget.tabIndex = props.disabled ? -1 : 0;
+        if(Modes.a11y) primaryTarget.tabIndex = props.disabled ? -1 : 0;
         primaryTarget.setAttribute('aria-disabled', String(!!props.disabled));
         primaryTarget.addEventListener('keydown', buttonKeyDown);
       }
     };
     createRenderEffect(update);
-    const observer = new MutationObserver(update);
-    observer.observe(containerElement, {childList: true, subtree: true});
+    // following the row's controls as they come and go is a subtree observer on every row: without
+    // the a11y layer, where all this sets is ARIA, the marks made on mount have to do
+    const observer = Modes.a11y ? new MutationObserver(update) : undefined;
+    observer?.observe(containerElement, {childList: true, subtree: true});
     onCleanup(() => {
-      observer.disconnect();
+      observer?.disconnect();
       clearPrimaryTarget();
     });
   };
@@ -202,8 +209,17 @@ const Row = (props: {children: JSX.Element} & Partial<{
       props.ref(container);
     }
   };
+  // Without the a11y layer only a row its caller made focusable answers to Enter/Space.
+  const onLegacyKeyDown = (event: KeyboardEvent) => {
+    if(event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).click();
+  };
   const onClick: JSX.EventHandlerUnion<HTMLElement, MouseEvent> = (event) => {
-    if(props.disabled || props['aria-disabled']) return;
+    if(Modes.a11y && (props.disabled || props['aria-disabled'])) return;
     const clickable = props.clickable;
     if(typeof(clickable) === 'function') {
       if(!hasMouseMovedSinceDown(event)) {
@@ -220,7 +236,7 @@ const Row = (props: {children: JSX.Element} & Partial<{
       ref={ref}
       component={props.as === 'a' ? 'a' : (props.as === 'label' || isCheckbox() ? 'label' : 'div')}
       role={role()}
-      tabIndex={props.tabIndex ?? (role() === 'button' ? props.disabled ? -1 : 0 : undefined)}
+      tabIndex={props.tabIndex ?? (Modes.a11y && role() === 'button' ? props.disabled ? -1 : 0 : undefined)}
       aria-checked={props['aria-checked']}
       aria-disabled={props['aria-disabled'] || props.disabled ? true : undefined}
       classList={{
@@ -240,7 +256,9 @@ const Row = (props: {children: JSX.Element} & Partial<{
       onClick={typeof(props.clickable) === 'function' || props.contextMenu ? onClick : undefined}
       aria-label={props['aria-label']}
       style={props.style}
-      onKeyDown={!props['on:keydown'] && !isCheckbox() && isClickable() ? buttonKeyDown : undefined}
+      onKeyDown={props['on:keydown'] ? undefined : Modes.a11y ?
+        (!isCheckbox() && isClickable() ? buttonKeyDown : undefined) :
+        (props.tabIndex !== undefined && props.clickable ? onLegacyKeyDown : undefined)}
       on:keydown={props['on:keydown']}
       noRipple={!haveRipple()}
     >
@@ -407,7 +425,8 @@ Row.Icon = (props: {
     <span
       class={classNames(
         'row-icon',
-        'row-icon-colored',
+        // white is for the glyph on a tile; without one it is a row's plain icon
+        !props.noBackground && 'row-icon-colored',
         props.class
       )}
       style={!props.noBackground && {

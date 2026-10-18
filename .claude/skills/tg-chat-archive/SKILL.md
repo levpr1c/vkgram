@@ -87,19 +87,30 @@ Workflow:
    its stored record — and its done mark — unless its edit timestamp
    (`editTs`, hidden edits included) moved; then the new content replaces the
    old one and the mark stays, reading as stale (`✔?`). Views, reactions and
-   `pinned` are refreshed either way.
+   `pinned` are refreshed either way. A record stored empty (no text, media or
+   service line) takes the fresh content too — the archiver learned to read
+   that kind of message since — and its mark stays fresh.
 6. **`--full`** rereads the whole history (down to `since`, if set): catches edits of old messages and
    marks messages deleted on the server with `"deleted": true` (kept, never
    dropped — it is an archive). Only a run that reaches the start of the chat
-   marks deletions.
+   marks deletions. Run it once after the archiver learns a new kind of
+   message, so the old empty records of that kind fill in.
 
 A run ends with `[tg-archive] done: …` (or `dry run — nothing written`); if
 that line is missing the script exits 1 and prints the path of the full vitest
 log.
 
+## Private by default
+
+Archived chats are private. Their names, ids, members and contents — and what
+was done because of them — never go into anything tracked or published: commit
+messages, code comments, tests, docs, PRs. Describe a change by the API behaviour
+or by the public reference clients instead. Reports built from an archive stay in
+gitignored `tmp/`.
+
 ## Answering a question about a chat
 
-The user asks about content ("что было в группе MTProto", "кто предлагал X"),
+The user asks about content ("что было в группе X", "кто предлагал Y"),
 usually by title, not by id:
 
 1. Read `~/.claude/tg-archive/INDEX.md` and match the chat by title, id or
@@ -122,7 +133,7 @@ bash .claude/skills/tg-chat-archive/mark.sh <chat> --list      # what is marked;
 bash .claude/skills/tg-chat-archive/mark.sh <chat> <id> --undo
 ```
 
-`<chat>` is the folder key (`chat12904944`), the Bot API or tweb id, the
+`<chat>` is the folder key (`chat1234567890`), the Bot API or tweb id, the
 @username or a piece of the title. It is offline — it edits `messages.jsonl` and
 regenerates the transcript, nothing else — and a sync running at the same time
 keeps the marks (it takes them from disk when it writes).
@@ -173,7 +184,8 @@ its latest edit. Service events read `#id HH:MM · Alice added Bob`.
 
 Message fields in `messages.jsonl`: `id`, `ts` (unix), `date` (ISO UTC),
 `from` `{key, name, username}`, `out`, `text` (text links kept as
-`[label](url)`), `media` (a one-line description — media files themselves are
+`[label](url)`; a rich message's blocks flattened to lines — list items as
+`- `, table cells tab-separated, its photos and files not described), `media` (a one-line description — media files themselves are
 NOT downloaded), `service`, `replyTo`, `replyToPeer`, `quote`, `topicId`,
 `topicTitle`, `fwdFrom`, `viaBot`, `editDate` (shown edits), `editTs` (raw
 edit_date, hidden edits too — what a sync compares), `groupedId` (album),

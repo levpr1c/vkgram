@@ -1,4 +1,5 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import '@/tests/mocks/intersectionObserverGlobal';
 import {keepAspect} from '@/vkgram/components/MessageMedia';
 
 // синглтон прокси при импорте стартует крипто-воркер (fetch(undefined) в jsdom) — глушим

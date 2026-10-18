@@ -1,4 +1,5 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import '@/tests/mocks/intersectionObserverGlobal';
 import {render} from 'solid-js/web';
 import MessageText from '@/vkgram/components/MessageText';
 import MessageRenderer from '@/vkgram/components/MessageRenderer';

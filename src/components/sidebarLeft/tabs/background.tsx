@@ -3,6 +3,7 @@ import {render} from 'solid-js/web';
 import {averageColor, averageColorFromCanvas} from '@helpers/averageColor';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import Modes from '@config/modes';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import markGridCornerItem, {GRID_CORNER_CLASSES} from '@helpers/dom/markGridCornerItem';
 import highlightingColor from '@helpers/highlightingColor';
@@ -27,10 +28,8 @@ import {AppTheme, AppThemeSettings} from '@config/state';
 import {blendWallpaperForTinted} from '@config/themePresets';
 import themeController from '@helpers/themeController';
 import requestFile from '@helpers/files/requestFile';
-import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
-import clearMediaElementSource from '@helpers/dom/clearMediaElementSource';
-import scaleMediaElement from '@helpers/canvas/scaleMediaElement';
-import {MediaSize} from '@helpers/mediaSize';
+import prepareWallPaperImage from '@helpers/files/prepareWallPaperImage';
+import {toastNew} from '@components/toast';
 import {getColorsFromWallPaper} from '@helpers/color';
 import ChatBackgroundStore from '@lib/chatBackgroundStore';
 import ListenerSetter from '@helpers/listenerSetter';
@@ -357,7 +356,7 @@ const ChatBackground = () => {
       // control with a name so keyboard / screen-reader users can pick a wallpaper. Here and not
       // in the static builder: the theme picker nests the same element inside its own tiles.
       container.setAttribute('role', 'button');
-      container.setAttribute('tabindex', '0');
+      if(Modes.a11y) container.setAttribute('tabindex', '0');
       container.setAttribute('aria-label', I18n.format('ChatBackground', true));
       media.classList.add('grid-item-media');
       solidRoots.push(dispose);
@@ -387,18 +386,12 @@ const ChatBackground = () => {
 
   const onUploadClick = () => {
     requestFile('image/x-png,image/png,image/jpeg').then(async(file) => {
-      if(file.name.endsWith('.png')) {
-        const img = document.createElement('img');
-        const url = URL.createObjectURL(file);
-        try {
-          await renderImageFromUrlPromise(img, url, false);
-          const mimeType = 'image/jpeg';
-          const {blob} = await scaleMediaElement({media: img, size: new MediaSize(img.naturalWidth, img.naturalHeight), mimeType});
-          file = new File([blob], file.name.replace(/\.png$/, '.jpg'), {type: mimeType});
-        } finally {
-          clearMediaElementSource(img);
-          URL.revokeObjectURL(url);
-        }
+      try {
+        file = await prepareWallPaperImage(file);
+      } catch(err) {
+        console.error('wallpaper upload: cannot prepare the image', err);
+        toastNew({langPackKey: 'Error.AnError'});
+        return;
       }
 
       const wallPaper = await rootScope.managers.appDocsManager.prepareWallPaperUpload(file);
@@ -437,8 +430,11 @@ const ChatBackground = () => {
         });
       };
       deferred.then(releaseUploadPreview, releaseUploadPreview);
-      deferred.catch(() => {
+      deferred.catch((error: ApiError) => {
         container.remove();
+        if(error?.type !== 'DOWNLOAD_CANCELED' && error?.type !== 'UPLOAD_CANCELED') {
+          toastNew({langPackKey: 'Error.AnError'});
+        }
       });
 
       const preloader = new ProgressivePreloader({
@@ -557,7 +553,7 @@ const ChatBackground = () => {
     attachClickEvent(grid, onGridClick, {listenerSetter});
     // Enter/Space on a focused wallpaper tile selects it (tiles are role="button" <div>s
     // picked via the delegated grid click above).
-    listenerSetter.add(grid)('keydown', (e: KeyboardEvent) => {
+    if(Modes.a11y) listenerSetter.add(grid)('keydown', (e: KeyboardEvent) => {
       if(e.key !== 'Enter' && e.key !== ' ') return;
       const target = findUpClassName(e.target, 'grid-item') as HTMLElement;
       if(!target) return;

@@ -14,8 +14,8 @@ import {clickVisible, expectNoA11yViolations, trackBrowserErrors} from './access
  * Like the pixel sweeps it needs an authorized preview and skips without one
  * rather than reporting a clean run it never made:
  *
- *   bash scripts/start-preview.sh --port 9105
- *   PLAYWRIGHT_BASE_URL=http://localhost:9105 pnpm exec playwright test e2e/accessibilitySignedIn.spec.ts
+ *   bash scripts/start-preview.sh --detach    # prints the URL, say http://localhost:9001
+ *   PLAYWRIGHT_BASE_URL=http://localhost:9001 pnpm exec playwright test e2e/accessibilitySignedIn.spec.ts
  */
 test.describe('the signed-in client has no detectable accessibility violations', () => {
   test.skip(!process.env.PLAYWRIGHT_BASE_URL, 'needs an authorized preview (PLAYWRIGHT_BASE_URL)');
@@ -63,7 +63,7 @@ test.describe('the signed-in client has no detectable accessibility violations',
     // two passes, one placeholder row and then the real ones a few seconds
     // later, and a scan that lands in between passes on an empty list. An
     // earlier version of this test did exactly that and reported it as clean.
-    await page.goto('/?noSharedWorker=1');
+    await page.goto('/?noSharedWorker=1&a11y=1');
     await page.waitForFunction(() => document.querySelectorAll('.chatlist-chat').length > 5,
       null, {timeout: 180_000});
     await page.waitForTimeout(3000);
@@ -114,7 +114,7 @@ test.describe('the signed-in client has no detectable accessibility violations',
     await scan('profile', '#column-right');
 
     // Settings: the one screen tree behind the main menu.
-    await page.goto('/?noSharedWorker=1');
+    await page.goto('/?noSharedWorker=1&a11y=1');
     await page.waitForFunction(() => document.querySelectorAll('.chatlist-chat').length > 0,
       null, {timeout: 180_000});
     await clickVisible(page, '#column-left .btn-menu-toggle');

@@ -16,6 +16,7 @@ import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import {Middleware} from '@helpers/middleware';
 import deferredPromise from '@helpers/cancellablePromise';
 import {MOUNT_CLASS_TO} from '@config/debug';
+import Modes from '@config/modes';
 import findUpAttribute from '@helpers/dom/findUpAttribute';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import rootScope from '@lib/rootScope';
@@ -590,7 +591,7 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
     return (
       <PopupElement.FooterButton
         confirm
-        langKey="Next"
+        langKey={Modes.a11y ? 'Next' : undefined}
         callback={() => {
           finalize();
         }}
@@ -669,7 +670,8 @@ export async function showPickUser2Popup<T extends boolean = false>({
   limitCallback,
   titleLangKey,
   placeholder,
-  exceptSelf
+  exceptSelf,
+  excludePeerIds
 }: {
   peerType?: SelectSearchPeerType[],
   filterPeerTypeBy: AppSelectPeers['filterPeerTypeBy'],
@@ -679,7 +681,8 @@ export async function showPickUser2Popup<T extends boolean = false>({
   limit?: number,
   limitCallback?: () => void,
   titleLangKey?: LangPackKey,
-  exceptSelf?: boolean
+  exceptSelf?: boolean,
+  excludePeerIds?: PopupPickUserOptions['excludePeerIds']
 }) {
   return new Promise<T extends false ? PeerId : PeerId[]>((resolve, reject) => {
     let resolved = false;
@@ -704,6 +707,7 @@ export async function showPickUser2Popup<T extends boolean = false>({
       chatRightsActions,
       titleLangKey,
       exceptSelf,
+      excludePeerIds,
       onClose: () => {
         if(!resolved) {
           reject();

@@ -2,6 +2,7 @@ import editableFieldStyles from '@/scss/modulePartials/editableFieldContent.modu
 import {createAutoDeleteIcon} from '@components/autoDeleteIcon';
 import {getOverlayRoot} from '@helpers/appWindow';
 import getPollCountryName from '@helpers/getPollCountryName';
+import attachPlainMessageEditor from '@components/chat/inputEditor/plainField';
 import InputField from '@components/inputField';
 import showDatePickerPopup from '@components/popups/datePicker';
 import showPickCountryPopup from '@components/popups/pickCountry';
@@ -28,10 +29,11 @@ import {Accessor, createEffect, createSignal, on, onCleanup, Show} from 'solid-j
 import {supportedDescriptionFormattingTypes} from './config';
 import {EmojiButtonWithOpacity as EmojiDropdownButton} from './emojiButtonWithOpacity';
 import {MediaAttachment} from './mediaAttachment';
-import {CreatePollStore, useCreatePollContext} from './storeContext';
+import {CreatePollStore, QUIZ_POLL_SETTINGS, useCreatePollContext} from './storeContext';
 import styles from './styles.module.scss';
 import {useCreatePollLimits} from './useCreatePollLimits';
 import {createFormFieldClickHandler, interactableClass, useSupportsMedia} from './utils';
+import smoothScrollBehavior from '@helpers/dom/smoothScrollBehavior';
 
 type BooleanSettingKey = FilterBooleanKeys<CreatePollStore>;
 
@@ -81,6 +83,11 @@ export const PollSettingsSectionContent = (props: {
       });
     }
   });
+
+  // The description travels as text plus entities; the composer's engine on
+  // the plain schema gives it the same formatting as the chat input.
+  const explanationInputEditor = attachPlainMessageEditor(explanationInput.input);
+  onCleanup(() => explanationInputEditor.destroy());
 
   explanationInput.input.classList.replace('input-field-input', editableFieldStyles.editableFieldContent);
   explanationInput.input.setAttribute('aria-label', I18n.format('NewPoll.Explanation.Placeholder', true));
@@ -166,13 +173,10 @@ export const PollSettingsSectionContent = (props: {
         subtitle={context.store.allowMultipleAnswers ? 'NewPoll.SetMultipleCorrectAnswerSubtitle' : 'NewPoll.SetCorrectAnswerSubtitle'}
         icon='checklist_done'
         checked={context.store.hasCorrectAnswer}
+        disabled={context.quiz !== undefined}
         onClick={() => {
           if(!context.store.hasCorrectAnswer) {
-            context.setStore({
-              hasCorrectAnswer: true,
-              allowAddingOptions: false,
-              allowRevoting: false
-            });
+            context.setStore(QUIZ_POLL_SETTINGS);
           } else {
             context.setStore({
               hasCorrectAnswer: false
@@ -218,7 +222,7 @@ export const PollSettingsSectionContent = (props: {
         onClick={handleSettingsFlag('durationLimited')}
       />
       <HeightTransition
-        onAfterEnter={() => limitDurationExtraElement()?.scrollIntoView({behavior: 'smooth', block: 'center'})}
+        onAfterEnter={() => limitDurationExtraElement()?.scrollIntoView({behavior: smoothScrollBehavior(), block: 'center'})}
       >
         <Show when={context.store.durationLimited}>
           <div ref={setLimitDurationExtraElement} style={{overflow: !isDurationMenuOpen() ? 'hidden' : undefined}}>
@@ -261,7 +265,7 @@ export const PollSettingsSectionContent = (props: {
         </Show>
       </HeightTransition>
 
-      <HeightTransition onAfterEnter={() => explanationElement()?.scrollIntoView({behavior: 'smooth', block: 'center'})}>
+      <HeightTransition onAfterEnter={() => explanationElement()?.scrollIntoView({behavior: smoothScrollBehavior(), block: 'center'})}>
         <Show when={context.store.hasCorrectAnswer}>
           <div ref={setExplanationElement} style={{overflow: 'hidden'}}>
             <Space amount='1rem' />

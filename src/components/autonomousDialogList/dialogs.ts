@@ -6,6 +6,7 @@ import isCollapsedCommunity from '@appManagers/utils/communities/isCollapsedComm
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
 import {isDialog, isForumTopic} from '@appManagers/utils/dialogs/isDialog';
+import {setRollingText} from '@components/animatedCounter';
 import ArchiveDialog, {createArchiveDialogState, DisposableArchiveDialogState} from '@components/archiveDialog';
 import {AutonomousDialogListBase, BaseConstructorArgs, LoadDialogsInnerArgs} from '@components/autonomousDialogList/base';
 import {BADGE_TRANSITION_TIME} from '@components/autonomousDialogList/constants';
@@ -142,14 +143,24 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       }
 
       const peerId = userId.toPeerId();
-      const dom = this.getDialogDom(peerId);
-      if(!dom) {
+      const dialogElement = this.getDialogElement(peerId);
+      if(!dialogElement) {
         return;
+      }
+
+      // * the row offers its bot's main mini app only while the bot has one (setUnreadMessages)
+      if(
+        dialogElement.hasBotMainApp !== undefined &&
+        dialogElement.hasBotMainApp !== !!apiManagerProxy.getUser(userId)?.pFlags?.bot_has_main_app
+      ) {
+        this.managers.appMessagesManager.getDialogOnly(peerId).then((dialog) => {
+          if(dialog) this.appDialogsManager.setUnreadMessagesN({dialog, dialogElement});
+        });
       }
 
       const status = await this.managers.appUsersManager.getUserStatus(userId);
       const online = status?._ === 'userStatusOnline';
-      this.setOnlineStatus(dom.avatarEl.node, online);
+      this.setOnlineStatus(dialogElement.dom.avatarEl.node, online);
     });
 
     this.listenerSetter.add(rootScope)('chat_update', async(chatId) => {
@@ -342,6 +353,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       requestItemForIdx: this.requestItemForIdx,
       onListShrinked: this.onListShrinked,
       itemSize: 72,
+      folderTagsFilterId: filterId,
       onListLengthChange: () => {
         scrollable.onSizeChange();
         this.appDialogsManager.onListLengthChange?.();
@@ -784,9 +796,11 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
     const reuseClassNames = ['unread', 'mention'];
     this.sortedList.getAllDialogElementsMap().forEach((dialogElement) => {
       const {dom} = dialogElement;
-      const unreadContent = dom.unreadBadge?.textContent;
+      // * not the badge's own text, which holds the rolling characters while its count changes
+      const unreadContent = dialogElement.unreadText;
       if(
         !unreadContent ||
+        !dom.unreadBadge ||
         dom.unreadBadge.classList.contains('backwards') ||
         dom.unreadBadge.classList.contains('dialog-pinned-icon')
       ) {
@@ -796,7 +810,7 @@ export class AutonomousDialogList extends AutonomousDialogListBase<Dialog> {
       const isUnreadAvatarBadgeMounted = !!dom.unreadAvatarBadge;
       dialogElement.createUnreadAvatarBadge();
       dialogElement.toggleBadgeByKey('unreadAvatarBadge', true, isUnreadAvatarBadgeMounted);
-      dom.unreadAvatarBadge.textContent = unreadContent;
+      setRollingText({element: dom.unreadAvatarBadge, text: unreadContent, direction: 0, animate: false});
       const unreadAvatarBadgeClassList = dom.unreadAvatarBadge.classList;
       const unreadBadgeClassList = dom.unreadBadge.classList;
       reuseClassNames.forEach((className) => {

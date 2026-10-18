@@ -1,9 +1,13 @@
-import {expect, Page, test} from '@playwright/test';
+import {expect, Page} from '@playwright/test';
 import {trackBrowserErrors} from './accessibility.helpers';
-import {openStory, preparePopupSandbox} from './popupSandbox.helpers';
+import {closeStory, openStory, preparePopupSandbox, takeStoryPart} from './popupSandbox.helpers';
+import {test} from './workerContext';
 
 const SHOWN_TIMEOUT = 10_000;
 const LAYOUT_SETTLE = 300;
+// The sweep is split into parts that run in parallel (takeStoryPart): walked in one piece it was
+// most of this suite's time.
+const PARTS = Number(process.env.POPUP_STORY_PARTS) || 8;
 
 /*
  * Opens every popup the sandbox knows about and asserts it actually renders.
@@ -12,6 +16,10 @@ const LAYOUT_SETTLE = 300;
  * from local fixtures, so this needs no session, no authorization and no Telegram traffic — a plain
  * dev server is enough. That makes it a cheap regression net over every popup in the app: one that
  * starts throwing on construction, or never reaches its visible state, fails here.
+ *
+ * Every story is walked twice: with full animations and with reduced ones (AGENTS.md "Animation
+ * levels"). The second walk is what catches a popup that waits for a `transitionend` or an
+ * `animationend` its CSS fires only with full animations - it opens, and then never leaves.
  *
  * This covers the FIXTURE source only. The panel's other source — the signed-in session's own data,
  * run against the real managers — needs an authorized preview and has no e2e yet; its write guard is
@@ -133,15 +141,26 @@ async function layoutComplaints(page: Page): Promise<string[]> {
   return await page.evaluate(collectLayoutComplaints);
 }
 
-test('every popup story opens and becomes visible', async({page}) => {
-  // One test walks the whole registry, so it needs far more than the config's per-test default.
-  test.setTimeout(5 * 60_000);
+/** Reduced animations, as Power Saving sets them; the sandbox runs no `appImManager` to put the body's classes on. */
+function reduceAnimations() {
+  const [, setAppSettings] = (window as any).useAppSettings();
+  setAppSettings('liteMode', 'motion', true);
+  document.body.classList.remove('animation-level-2');
+}
+
+for(const reduced of [false, true]) for(let part = 0; part < PARTS; ++part) test(`every popup story opens and becomes visible (part ${part + 1}/${PARTS}${reduced ? ', reduced animations' : ''})`, async({page}) => {
+  // A part still walks a slice of the registry, more than the config's per-test default allows.
+  test.setTimeout(3 * 60_000);
 
   const {pageErrors, renderErrors} = trackBrowserErrors(page);
 
   await preparePopupSandbox(page);
+  if(reduced) {
+    await page.evaluate(reduceAnimations);
+    expect(await page.evaluate(() => (window as any).liteMode.getAnimationLevel())).toBe(1);
+  }
 
-  const stories = await page.evaluate(() => window.popupSandbox.list());
+  const stories = takeStoryPart(await page.evaluate(() => window.popupSandbox.list()), part, PARTS);
   expect(stories.length).toBeGreaterThan(0);
 
   const failed: string[] = [];
@@ -159,7 +178,9 @@ test('every popup story opens and becomes visible', async({page}) => {
       try {
         await expect.poll(
           () => page.evaluate((selector) => document.querySelectorAll(selector).length, shown),
-          {timeout: SHOWN_TIMEOUT}
+          // a popup turns active a frame after it opens: the default 100/250/500ms steps waited
+          // out most of a step on nearly every story
+          {timeout: SHOWN_TIMEOUT, intervals: [20]}
         ).toBeGreaterThan(0);
       } catch{
         failed.push(`${story.id}: never became visible`);
@@ -177,13 +198,47 @@ test('every popup story opens and becomes visible', async({page}) => {
     // Teardown is deliberately outside the assertion window (errors reset at the top of the loop):
     // several popups model "cancelled" as a rejected promise, and closing one from a script rather
     // than through the caller's own flow leaves that rejection unhandled — the sandbox's doing.
-    await page.evaluate(() => window.popupSandbox.closePopups());
-    // Longer than the 250ms hide timeout, after which a closed popup fires `closeAfterTimeout`.
-    await page.waitForTimeout(400);
+    if(!(await closeStory(page, story, {timeout: SHOWN_TIMEOUT}))) {
+      failed.push(`${story.id}: still in the DOM after closing`);
+    }
     if(renderErrors.length) {
       failed.push(`${story.id}: render error — ${renderErrors.join(' | ')}`);
     }
   }
 
   expect(failed, `\n${failed.join('\n')}\n`).toEqual([]);
+});
+
+/*
+ * The promo slide of the premium/business popup is a `.tabs-tab` whose `active` class is set
+ * imperatively by TransitionSlider, while its own `not-bottom` / header classes are reactive.
+ * Binding both through `class=` made Solid rewrite className wholesale on the first scroll and
+ * drop `active`, collapsing the popup to an empty grey sheet. Scrolling to the bottom is the only
+ * way to see it, so it is asserted here rather than in the walk above.
+ *
+ * Only the business story is used: both popups share this slide, and it is the one whose feature
+ * list overflows under the sandbox fixtures (`premium/boarding` gets a four-feature promo order
+ * from the mock app config and fits without scrolling).
+ */
+test('premium/business keeps its content after scrolling to the bottom', async({page}) => {
+  await page.goto('/?popups=1');
+  await page.waitForFunction(() => !!window.popupSandbox, null, {timeout: 30_000});
+  await page.evaluate(() => window.popupSandbox.ready());
+  await page.evaluate(() => window.popupSandbox.open('premium/business'));
+
+  const tab = page.locator('.popup-premium .premium-promo-tab');
+  await expect(tab).toBeVisible({timeout: SHOWN_TIMEOUT});
+  await expect(tab).toHaveClass(/\bactive\b/);
+
+  const scrolled = await tab.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    return el.scrollTop;
+  });
+  expect(scrolled, 'the promo slide should overflow enough to scroll').toBeGreaterThan(0);
+
+  await expect(tab).toHaveClass(/\bactive\b/);
+  await expect(tab.locator('.popup-body')).toBeVisible();
+  await expect(tab.locator('.popup-premium-features-container .row').first()).toBeVisible();
+  // The header only fades in once scrolled past 100px — proof the handler ran at all.
+  await expect(tab.locator('.popup-header')).toHaveClass(/\bis-visible\b/);
 });

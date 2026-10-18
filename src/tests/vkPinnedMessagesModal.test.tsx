@@ -1,4 +1,5 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import '@/tests/mocks/intersectionObserverGlobal';
 import {render} from 'solid-js/web';
 import type {Message} from '@layer';
 import '@helpers/peerIdPolyfill';

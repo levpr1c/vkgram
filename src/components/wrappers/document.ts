@@ -18,6 +18,7 @@ import getDownloadMediaDetails from '@appManagers/utils/download/getDownloadMedi
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
 import I18n, {joinElementsWith} from '@lib/langPack';
 import Button from '@components/button';
+import Modes from '@config/modes';
 import {MAX_FILE_SAVE_SIZE} from '@appManagers/constants';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
@@ -37,6 +38,7 @@ import {Middleware} from '@helpers/middleware';
 import readBlobAsText from '@helpers/blob/readBlobAsText';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {openMarkdownInstantView} from '@components/markdownInstantView';
+import isPlayableDocument from '@appManagers/utils/docs/isPlayableDocument';
 
 rootScope.addEventListener('document_downloading', (docId) => {
   const elements = Array.from(document.querySelectorAll(`.document[data-doc-id="${docId}"]`)) as HTMLElement[];
@@ -118,7 +120,7 @@ export default async function wrapDocument({
 
   const doc = docOverride ?? (((message.media as MessageMedia.messageMediaDocument).document || ((message.media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage).document) as MyDocument);
   uploadingFileName ??= message?.uploadingFileName?.[0];
-  if(doc.type === 'audio' || doc.type === 'voice' || doc.type === 'round') {
+  if(isPlayableDocument(doc)) {
     return createAudioElement({
       message,
       middleware,
@@ -161,8 +163,8 @@ export default async function wrapDocument({
   // return docDiv;
 
   const canActivate = !(!uploadingFileName && message.pFlags.is_outgoing && !message.mid);
-  const icoDiv = canActivate ? Button('', {noRipple: true}) : document.createElement('div');
-  if(canActivate) icoDiv.setAttribute('aria-label', I18n.format('AccDescr.OpenDocument', true, [doc.file_name || 'Unknown.file']));
+  const icoDiv = canActivate && Modes.a11y ? Button('', {noRipple: true}) : document.createElement('div');
+  if(canActivate && Modes.a11y) icoDiv.setAttribute('aria-label', I18n.format('AccDescr.OpenDocument', true, [doc.file_name || 'Unknown.file']));
   icoDiv.classList.add('document-ico');
   let icoTextEl: HTMLElement;
 

@@ -2,6 +2,28 @@
 
 $inactive-opacity: .4;
 
+// * what a mover is moved by where the browser has registered properties (moverTransform.ts): its
+// * transitions then run on the main thread together with the clip, corners and size it opens and
+// * closes with, instead of on the compositor ahead of them
+@property --media-viewer-mover-transform {
+  syntax: '<transform-list>';
+  inherits: false;
+  initial-value: translateZ(0) scale3d(1, 1, 1);
+}
+
+// * how a mover opens, closes and moves aside, by whichever property moves it
+// * (reduced animations: it only fades, opening and closing where the media stands)
+@mixin mover-transitions($moved) {
+  &.active,
+  &.active.opening {
+    @include animation-level-transition($moved var(--open-duration), border-radius var(--open-duration), opacity var(--open-duration));
+  }
+
+  &.moving {
+    @include animation-level-transition($moved var(--move-duration) ease);
+  }
+}
+
 .media-viewer {
   position: fixed;
   top: 0;
@@ -145,9 +167,7 @@ $inactive-opacity: .4;
     background-color: transparent;
     user-select: text;
 
-    @include animation-level(2) {
-      transition: transform var(--layer-transition), opacity var(--open-duration) ease-in-out, background-color var(--open-duration) ease-in-out;
-    }
+    @include animation-level-transition(transform var(--layer-transition), opacity var(--open-duration) ease-in-out, background-color var(--open-duration) ease-in-out);
 
     .scrollable {
       padding: .5rem .875rem;
@@ -375,16 +395,11 @@ $inactive-opacity: .4;
     //   }
     // }
 
-    &.active {
-      transition: transform var(--open-duration), border-radius var(--open-duration), opacity var(--open-duration);
-    }
+    @include mover-transitions(transform);
 
-    &.active.opening {
-      transition: transform var(--open-duration), border-radius var(--open-duration), opacity var(--open-duration);
-    }
-
-    &.moving {
-      transition: transform var(--move-duration) ease;
+    &.is-transform-synced {
+      transform: var(--media-viewer-mover-transform);
+      @include mover-transitions(--media-viewer-mover-transform);
     }
 
     /* &.center {
@@ -451,7 +466,7 @@ $inactive-opacity: .4;
     opacity: 0;
     visibility: hidden;
 
-    @include animation-level(2) {
+    @include animation-level(1) {
       transition: opacity var(--open-duration) 0s, visibility 0s var(--open-duration);
     }
   }
@@ -473,7 +488,7 @@ $inactive-opacity: .4;
       color: #fff;
       opacity: $inactive-opacity;
 
-      @include animation-level(2) {
+      @include animation-level(1) {
         transition: opacity var(--open-duration) ease-in-out, color var(--open-duration) ease-in-out, background-color var(--open-duration) ease-in-out;
       }
 
@@ -492,9 +507,7 @@ $inactive-opacity: .4;
       background: var(--mv-panel-background-handhelds);
       transform: translateY(0);
 
-      @include animation-level(2) {
-        transition: opacity var(--open-duration) ease-in-out, transform var(--open-duration) ease-in-out !important;
-      }
+      @include animation-level-transition(opacity var(--open-duration) ease-in-out, transform var(--open-duration) ease-in-out, $important: true);
 
       // Touch has no hover to reveal the chrome, so show it at full opacity (it
       // floats over the media now); the gradient scrim above carries legibility.
@@ -521,7 +534,9 @@ $inactive-opacity: .4;
   }
 
   &-mover.active &-aspecter {
-    transition: width var(--open-duration), height var(--open-duration), transform var(--open-duration), border-radius var(--open-duration);
+    @include animation-level(2) {
+      transition: width var(--open-duration), height var(--open-duration), transform var(--open-duration), border-radius var(--open-duration);
+    }
     //transition: var(--open-duration) all;
   }
 
@@ -561,7 +576,7 @@ $inactive-opacity: .4;
         opacity: 1;
         visibility: visible;
 
-        @include animation-level(2) {
+        @include animation-level(1) {
           transition: opacity var(--open-duration) 0s, visibility 0s 0s;
         }
       }
@@ -607,6 +622,11 @@ $inactive-opacity: .4;
           opacity: 0;
           transform: translateY(-100%);
           pointer-events: none;
+
+          // reduced: it fades out where it stands
+          @include animation-level-below(2) {
+            transform: none;
+          }
         }
       }
     }
@@ -701,7 +721,7 @@ $inactive-opacity: .4;
   transform: translateX(-50%);
   z-index: 5;
 
-  @include animation-level(2) {
+  @include animation-level(1) {
     transition: opacity var(--open-duration);
   }
   

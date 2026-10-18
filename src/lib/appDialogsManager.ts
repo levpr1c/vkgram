@@ -10,6 +10,8 @@ import DialogsSelection from '@components/dialogsSelection';
 import {PINNED_DIALOG_CLASS_NAME} from '@components/dialogsPinnedReorder';
 import type {DialogsSelectionBase} from '@components/dialogsSelectionBase';
 import DotRenderer from '@components/dotRenderer';
+import attachDialogFolderTags, {DialogFolderTags, DialogFolderTagsContext} from '@components/folderTags/dialogFolderTags';
+import {setChatListForumOpen, useChatListNarrow, useFolderTagsShown} from '@stores/folderTags';
 import {horizontalMenuObjArgs} from '@components/horizontalMenu';
 import Scrollable from '@components/scrollable';
 import {ScrollableContextValue} from '@components/scrollable2';
@@ -22,6 +24,7 @@ import Button from '@components/button';
 import SetTransition from '@components/singleTransition';
 import {MyDraftMessage} from '@appManagers/appDraftsManager';
 import {MOUNT_CLASS_TO} from '@config/debug';
+import Modes from '@config/modes';
 import PeerTitle, {changeTitleEmojiColor} from '@components/peerTitle';
 import I18n, {FormatterArguments, i18n, LangPackKey, _i18n} from '@lib/langPack';
 import findUpClassName from '@helpers/dom/findUpClassName';
@@ -33,6 +36,7 @@ import appSidebarLeft from '@components/sidebarLeft';
 import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import replaceContent from '@helpers/dom/replaceContent';
+import crossfadeContent, {getCrossfadingTo} from '@helpers/dom/crossfadeContent';
 import highlightText, {TextHighlight} from '@helpers/dom/textHighlight';
 import ConnectionStatusComponent from '@components/connectionStatus';
 import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
@@ -42,7 +46,6 @@ import handleTabSwipe from '@helpers/dom/handleTabSwipe';
 import {ChatlistContacts, createChatlistContacts} from '@components/sidebarLeft/chatlistContacts';
 import isInDOM from '@helpers/dom/isInDOM';
 import {setSendingStatus} from '@components/sendingStatus';
-import {SortedElementBase} from '@helpers/sortedList';
 import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS} from '@appManagers/constants';
 import groupCallActiveIcon from '@components/groupCallActiveIcon';
 import {ChatlistsChatlistUpdates, DialogFilter, Message, MessageMedia, MessageReplyHeader, Photo} from '@layer';
@@ -54,6 +57,7 @@ import appSidebarRight from '@components/sidebarRight';
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
 import renderDialogSubtitleParts from '@components/wrappers/dialogSubtitle';
 import wrapMessageForReply from '@components/wrappers/messageForReply';
+import getMessageForReplyContent from '@components/wrappers/messageForReplyContent';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import isMessageRestricted, {isMessageSensitive} from '@appManagers/utils/messages/isMessageRestricted';
 import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
@@ -70,7 +74,6 @@ import cancelEvent from '@helpers/dom/cancelEvent';
 import noop from '@helpers/noop';
 import pause from '@helpers/schedulers/pause';
 import apiManagerProxy from '@lib/apiManagerProxy';
-import filterAsync from '@helpers/array/filterAsync';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {getMiddleware, MiddlewareHelper} from '@helpers/middleware';
 import getDialogMentionBadgeState from '@helpers/dialogMentionBadgeState';
@@ -104,6 +107,7 @@ import {renderNewAuthorization} from '@components/sidebarLeft/newAuthorization';
 import {useHasFolders} from '@stores/foldersSidebar';
 import {useAppState} from '@stores/appState';
 import {BADGE_TRANSITION_TIME} from '@components/autonomousDialogList/constants';
+import {setRollingText} from '@components/animatedCounter';
 import {AutonomousDialogList} from '@components/autonomousDialogList/dialogs';
 import {PossibleDialog, setDialogTyping} from '@components/autonomousDialogList/base';
 import {ForumTab} from '@components/forumTab/forumTab';
@@ -116,10 +120,11 @@ import LazyLoadQueue from '@components/lazyLoadQueue';
 import {fastSmoothScrollToStart} from '@helpers/fastSmoothScroll';
 import ArchiveDialog, {archiveDialogTagName} from '@components/archiveDialog';
 import {createArchiveDialogContextMenu} from '@components/archiveDialogContextMenu';
-import {children, createRoot, untrack} from 'solid-js';
+import {children, createEffect, createRoot, createUniqueId, on, untrack} from 'solid-js';
 import useFolders from '@stores/folders';
 import FoldersTabs from '@components/foldersTabs';
 import clamp from '@helpers/number/clamp';
+import debounce from '@helpers/schedulers/debounce';
 import confirmationPopup from '@components/confirmationPopup';
 import ListenerSetter from '@helpers/listenerSetter';
 import type {PopupPeerHandle} from '@components/popups/peer';
@@ -129,9 +134,7 @@ import {
   type ChatlistTopNotificationController
 } from '@components/sidebarLeft/chatlistTopNotification';
 
-
 export const DIALOG_LIST_ELEMENT_TAG = 'A';
-const DIALOG_LOAD_COUNT = 20;
 // below this many dialogs the sidebar looks empty, so contacts are offered under the chat list
 const MIN_DIALOGS_WITHOUT_CONTACTS = 10;
 
@@ -155,6 +158,8 @@ export type DialogDom = {
   mentionsBadge?: HTMLElement,
   reactionsBadge?: HTMLElement,
   pollVotesBadge?: HTMLElement,
+  /** opens a bot's main mini app without opening the chat */
+  botAppButton?: HTMLElement,
   lastMessageSpan: HTMLSpanElement,
   containerEl: HTMLElement,
   listEl: HTMLElement,
@@ -185,11 +190,6 @@ export type DialogDom = {
   setUnreadMessagePromise?: CancellablePromise<void>
 };
 
-interface SortedDialog extends SortedElementBase<PeerId> {
-  dom: DialogDom,
-  dialogElement: DialogElement
-}
-
 function setPromiseMiddleware<T extends {[smth in K as K]?: CancellablePromise<void>}, K extends keyof T>(obj: T, key: K) {
   const oldPromise: CancellablePromise<void> = obj[key] as any;
   oldPromise?.reject();
@@ -212,6 +212,17 @@ function disposeTextHighlight(dom: DialogDom) {
 }
 
 /**
+ * Puts the subtitle of a row in - crossfading from the activity it takes the place of, which
+ * came in the same way (`setDialogTyping`)
+ */
+function setDialogSubtitle(dom: DialogDom, nodes: Node[]) {
+  const {lastMessageSpan} = dom;
+  const wasTyping = lastMessageSpan.classList.contains('user-typing');
+  lastMessageSpan.classList.remove('user-typing');
+  crossfadeContent(lastMessageSpan, nodes, wasTyping ? 'crossfade' : 'update');
+}
+
+/**
  * Whether the subtitle in the DOM is still exactly what `setLastMessage` put
  * there — anyone else writing into `lastMessageSpan` (a community dialog
  * falling back to its chat count, a search result, a sidebar picker) has to
@@ -219,7 +230,8 @@ function disposeTextHighlight(dom: DialogDom) {
  */
 function isRenderedSubtitleIntact(dom: DialogDom) {
   const parts = dom.lastMessageRenderParts;
-  const {childNodes} = dom.lastMessageSpan;
+  // * crossfading in, the parts are what it fades to (`setDialogSubtitle`)
+  const childNodes = getCrossfadingTo(dom.lastMessageSpan) ?? dom.lastMessageSpan.childNodes;
   return !!parts &&
     parts.length === childNodes.length &&
     parts.every((part, idx) => part === childNodes[idx]);
@@ -231,8 +243,7 @@ function getFolderTitleTextColor(active: boolean) {
 
 const BADGE_SIZE = 22;
 
-
-const avatarSizeMap: {[k in DialogElementSize]?: number} = {
+export const DIALOG_AVATAR_SIZES: {[k in DialogElementSize]?: number} = {
   bigger: 54,
   abitbigger: 42,
   small: 32
@@ -260,7 +271,9 @@ export type DialogElementOptions = {
   dontSetActive?: boolean,
   asAllChats?: AsAllChatsType,
   autoDeletePeriod?: number,
-  avatarElement?: HTMLElement
+  avatarElement?: HTMLElement,
+  /** the row is in a folder's chat list, and wears the tags of the other folders its chat is in */
+  folderTags?: DialogFolderTagsContext
 };
 
 export type DialogElementBadgeState = {
@@ -268,12 +281,15 @@ export type DialogElementBadgeState = {
   pinned: boolean,
   unread: boolean,
   unreadText?: string,
+  /** the count `unreadText` stands for - tells which way a changed one rolls */
+  unreadCount?: number,
   unreadMention?: boolean,
   unreadAvatar: boolean,
   unreadAvatarText?: string,
   mentions: boolean,
   reactions: boolean,
   pollVotes: boolean,
+  botApp?: boolean,
   transitionDuration?: number
 };
 
@@ -282,6 +298,8 @@ type DialogElementAppliedBadgeState = {
 } & {
   hasOnlyPinnedBadge: boolean,
   unreadText?: string,
+  unreadCount?: number,
+  unreadMention?: boolean,
   unreadAvatarText?: string
 };
 
@@ -290,7 +308,10 @@ export interface DialogElement extends RowTsxController {}
 export class DialogElement {
   public dom: DialogDom;
   public isMainList: boolean;
+  /** what the row last saw of its bot's main mini app - `user_update` redraws it on a change */
+  public hasBotMainApp: boolean;
   public middlewareHelper: MiddlewareHelper;
+  public folderTags?: DialogFolderTags;
   private peerTitle: PeerTitle;
   private lastBadgeState: DialogElementAppliedBadgeState;
 
@@ -313,7 +334,8 @@ export class DialogElement {
     dontSetActive,
     asAllChats,
     autoDeletePeriod,
-    avatarElement
+    avatarElement,
+    folderTags
   }: DialogElementOptions) {
     const wrapMiddleware = wrapOptions?.middleware;
     this.middlewareHelper = wrapMiddleware ? wrapOptions.middleware.create() : (controlled ? getMiddleware() : undefined);
@@ -351,7 +373,7 @@ export class DialogElement {
       undefined :
       avatarNew({
         middleware: this.middlewareHelper.get(),
-        size: avatarSizeMap[avatarSize],
+        size: DIALOG_AVATAR_SIZES[avatarSize],
 
         lazyLoadQueue: newWrapOptions.lazyLoadQueue,
         isDialog: !!meAsSaved,
@@ -444,7 +466,6 @@ export class DialogElement {
     if(monoforumParentPeerId) li.dataset.monoforumParentPeerId = '' + monoforumParentPeerId;
     if(asAllChats) li.dataset.isAllChats = 'true';
 
-
     const statusSpan = document.createElement('span');
     statusSpan.classList.add('message-status', 'sending-status'/* , 'transition', 'reveal' */);
 
@@ -475,6 +496,15 @@ export class DialogElement {
       subtitleEl: this.subtitleRow,
       titleWrapOptions
     };
+
+    if(folderTags && this.middlewareHelper) {
+      this.folderTags = attachDialogFolderTags({
+        listEl: li,
+        after: this.subtitleRow,
+        context: folderTags,
+        middleware: this.middlewareHelper.get()
+      });
+    }
 
     // this will never happen for migrated legacy chat
     if(!autonomous) {
@@ -583,11 +613,41 @@ export class DialogElement {
     this.dom.subtitleEl.append(badge);
   }
 
+  public createBotAppButton() {
+    if(this.dom.botAppButton) return;
+    const button = this.dom.botAppButton = Button(
+      `dialog-subtitle-badge badge badge-${BADGE_SIZE} btn-color-primary dialog-subtitle-badge-bot-app`,
+      {text: 'Open', noRipple: true, asDiv: !Modes.a11y}
+    );
+    // * every such button says "Open" - it is the bot's name that tells them apart
+    const {titleSpan} = this.dom;
+    titleSpan.id ||= createUniqueId();
+    button.setAttribute('aria-describedby', titleSpan.id);
+    // * the list opens the chat on a press anywhere in the row (setListClickListener), but not on this
+    button.dataset.dialogListAction = 'true';
+    button.addEventListener('click', (e) => {
+      cancelEvent(e); // * the row is a link
+      const peerId = this.dom.listEl.dataset.peerId.toPeerId();
+      // * turning the confirmation down rejects, and leaves nothing to do
+      appImManager.openWebApp({botId: peerId.toUserId(), main: true, peerId}).catch(noop);
+    });
+    this.dom.subtitleEl.append(button);
+  }
+
   public setBadgeState(options: DialogElementBadgeState) {
     const transitionDuration = options.transitionDuration || 0;
     this.setMuted(options.muted, transitionDuration);
 
     const previous = this.lastBadgeState;
+    const botApp = !!options.botApp;
+    // * the bot's button takes the pin's place instead of covering it, as the unread badge does
+    const pinned = options.pinned && !botApp;
+
+    // * `toggleBadgeByKey` writes what it toggles into the very state `previous` is
+    const wasVisible = {
+      unreadBadge: !!previous?.unreadBadge,
+      unreadAvatarBadge: !!previous?.unreadAvatarBadge
+    };
 
     const mounted = {
       pinnedBadge: !!this.dom.pinnedBadge,
@@ -595,31 +655,54 @@ export class DialogElement {
       unreadAvatarBadge: !!this.dom.unreadAvatarBadge,
       mentionsBadge: !!this.dom.mentionsBadge,
       reactionsBadge: !!this.dom.reactionsBadge,
-      pollVotesBadge: !!this.dom.pollVotesBadge
+      pollVotesBadge: !!this.dom.pollVotesBadge,
+      botAppButton: !!this.dom.botAppButton
     };
+
+    const states: Array<[
+      Parameters<DialogElement['toggleBadgeByKey']>[0],
+      boolean
+    ]> = [
+      ['pinnedBadge', pinned],
+      ['unreadBadge', options.unread],
+      ['unreadAvatarBadge', options.unreadAvatar],
+      ['mentionsBadge', options.mentions],
+      ['reactionsBadge', options.reactions],
+      ['pollVotesBadge', options.pollVotes],
+      ['botAppButton', botApp]
+    ];
+
+    // * the bot's button and the badges of the subtitle take turns in one place, so whatever
+    // * leaves it to the other leaves from where it stands - measured before the newcomer is
+    // * appended and pushes it aside
+    if(transitionDuration && previous && previous.botAppButton !== botApp) {
+      this.holdBadgesInPlace(states
+      .filter(([key, visible]) => key !== 'unreadAvatarBadge' && !visible && previous[key] && this.dom[key])
+      .map(([key]) => this.dom[key]));
+    }
+
     // * the pinned rows of a list form the block that can be reordered within itself, and
     // * `Sortable` reads that block off the DOM - see attachPinnedDialogsReorder
     this.dom.listEl.classList.toggle(PINNED_DIALOG_CLASS_NAME, !!options.pinned);
 
-    if(options.pinned) {
-      this.createPinnedBadge();
-      this.createSortableIcon();
-    }
-
+    if(options.pinned) this.createSortableIcon();
+    if(pinned) this.createPinnedBadge();
     if(options.unread) this.createUnreadBadge();
     if(options.unreadAvatar) this.createUnreadAvatarBadge();
     if(options.mentions) this.createMentionsBadge();
     if(options.reactions) this.createReactionsBadge();
     if(options.pollVotes) this.createPollVotesBadge();
+    if(botApp) this.createBotAppButton();
 
     const subtitleBadgesLength = [
-      options.pinned,
+      pinned,
       options.unread,
       options.mentions,
       options.reactions,
-      options.pollVotes
+      options.pollVotes,
+      botApp
     ].filter(Boolean).length;
-    const hasOnlyPinnedBadge = options.pinned && subtitleBadgesLength === 1;
+    const hasOnlyPinnedBadge = pinned && subtitleBadgesLength === 1;
     // * `SetTransition` keeps `animating` on the element for the whole duration,
     // * and `.has-only-pinned-badge:not(.animating)` drops the subtitle's trailing
     // * margin while it is there. Replaying it for an unchanged state makes the
@@ -633,17 +716,6 @@ export class DialogElement {
       });
     }
 
-    const states: Array<[
-      Parameters<DialogElement['toggleBadgeByKey']>[0],
-      boolean
-    ]> = [
-      ['pinnedBadge', options.pinned],
-      ['unreadBadge', options.unread],
-      ['unreadAvatarBadge', options.unreadAvatar],
-      ['mentionsBadge', options.mentions],
-      ['reactionsBadge', options.reactions],
-      ['pollVotesBadge', options.pollVotes]
-    ];
     for(const [key, visible] of states) {
       if(!this.dom[key]) {
         continue;
@@ -657,11 +729,26 @@ export class DialogElement {
       this.toggleBadgeByKey(key, visible, mounted[key], !transitionDuration);
     }
 
+    // * a count that changes on a badge already in sight rolls to the new one, character by
+    // * character, as it does in the official apps; one that comes in with its badge does not,
+    // * nor does the `@` of a mention, whose badge is cut differently (`.mention`) and would
+    // * swell on its way to a number
+    const unreadDirection = (options.unreadCount ?? 0) - (previous?.unreadCount ?? 0);
+    const rollUnread = !!transitionDuration && !!previous && !previous.unreadMention === !options.unreadMention;
+    const setUnreadText = (key: 'unreadBadge' | 'unreadAvatarBadge', text: string) => {
+      setRollingText({
+        element: this.dom[key],
+        text,
+        direction: unreadDirection,
+        animate: rollUnread && mounted[key] && wasVisible[key]
+      });
+    };
+
     if(options.unread && this.dom.unreadBadge) {
       if(options.unreadText !== undefined && options.unreadText !== previous?.unreadText) {
-        this.dom.unreadBadge.innerText = options.unreadText;
+        setUnreadText('unreadBadge', options.unreadText);
         if(this.dom.unreadAvatarBadge) {
-          this.dom.unreadAvatarBadge.innerText = options.unreadText;
+          setUnreadText('unreadAvatarBadge', options.unreadText);
         }
       }
       this.dom.unreadBadge.classList.add('unread');
@@ -670,27 +757,61 @@ export class DialogElement {
 
     if(options.unreadAvatar && this.dom.unreadAvatarBadge) {
       if(options.unreadAvatarText !== undefined && options.unreadAvatarText !== previous?.unreadAvatarText) {
-        this.dom.unreadAvatarBadge.innerText = options.unreadAvatarText;
+        setUnreadText('unreadAvatarBadge', options.unreadAvatarText);
       }
       this.dom.unreadAvatarBadge.classList.add('unread');
       this.dom.unreadAvatarBadge.classList.toggle('mention', !!options.unreadMention);
     }
 
     this.lastBadgeState = {
-      pinnedBadge: options.pinned,
+      pinnedBadge: pinned,
       unreadBadge: options.unread,
       unreadAvatarBadge: options.unreadAvatar,
       mentionsBadge: options.mentions,
       reactionsBadge: options.reactions,
       pollVotesBadge: options.pollVotes,
+      botAppButton: botApp,
       hasOnlyPinnedBadge,
       unreadText: options.unreadText,
+      unreadCount: options.unreadCount,
+      unreadMention: options.unreadMention,
       unreadAvatarText: options.unreadAvatarText
     };
   }
 
+  /** what the unread badge says - its DOM holds the plain text only while the count stands still */
+  public get unreadText() {
+    return this.lastBadgeState?.unreadText;
+  }
+
+  /**
+   * Lifts the leaving badges out of the subtitle's flow, each where it stands: the one coming
+   * in their place does not push them aside, and their going leaves no gap to snap shut
+   */
+  private holdBadgesInPlace(badges: HTMLElement[]) {
+    const row = this.subtitleRow;
+    if(!badges.length || !row.isConnected) {
+      return;
+    }
+
+    // * all measured before any is lifted, as lifting one moves the rest
+    const isRTL = I18n.getIsRTL();
+    const width = row.clientWidth;
+    const places = badges.map((badge) => ({
+      badge,
+      top: badge.offsetTop,
+      inlineEnd: isRTL ? badge.offsetLeft : width - badge.offsetLeft - badge.offsetWidth
+    }));
+
+    for(const {badge, top, inlineEnd} of places) {
+      badge.style.setProperty('--held-top', top + 'px');
+      badge.style.setProperty('--held-inline-end', inlineEnd + 'px');
+      badge.classList.add('is-held-in-place');
+    }
+  }
+
   public toggleBadgeByKey(
-    key: Extract<keyof DialogDom, 'unreadBadge' | 'unreadAvatarBadge' | 'mentionsBadge' | 'reactionsBadge' | 'pollVotesBadge' | 'pinnedBadge'>,
+    key: Extract<keyof DialogDom, 'unreadBadge' | 'unreadAvatarBadge' | 'mentionsBadge' | 'reactionsBadge' | 'pollVotesBadge' | 'pinnedBadge' | 'botAppButton'>,
     hasBadge: boolean,
     justCreated: boolean,
     batch?: boolean
@@ -700,6 +821,11 @@ export class DialogElement {
     // * keep it in sync — otherwise reading the last unread topic can't hide the avatar badge
     if(this.lastBadgeState) {
       this.lastBadgeState[key] = hasBadge;
+    }
+
+    // * called back before it was gone
+    if(hasBadge) {
+      this.dom[key].classList.remove('is-held-in-place');
     }
 
     SetTransition({
@@ -822,7 +948,7 @@ export class AppDialogsManager {
   private forumsTabs: Map<PeerId, ForumTab>;
   private forumsSlider: HTMLElement;
   private forumTabByPeerIdPromises = new Map<PeerId, Promise<void>>();
-  public forumTab: ForumTab;
+  private openForumTab: ForumTab;
   private forumNavigationItem: NavigationItem;
 
   public xd: AutonomousDialogList;
@@ -841,8 +967,6 @@ export class AppDialogsManager {
   private foldersOverlay: HTMLElement;
 
   private lazyLoadQueue: LazyLoadQueue;
-
-  private ignoreFolderChange: boolean;
 
   public start() {
     const managers = this.managers = getProxiedManagers();
@@ -1119,19 +1243,59 @@ export class AppDialogsManager {
     return this.xd.sortedList.list;
   }
 
+  /** The forum open over the chat list - the list narrows under it (`isChatListNarrow`) */
+  public get forumTab() {
+    return this.openForumTab;
+  }
+
+  public set forumTab(forumTab: ForumTab) {
+    this.openForumTab = forumTab;
+    setChatListForumOpen(!!forumTab);
+  }
+
   /**
    * Whether the chat list is down to its avatars - a forum tab is open over it, or the sidebar is
-   * collapsed. The rows then carry their unread count on the avatar, and cannot be selected: they
-   * could not be told apart, nor open the lane a selected row makes for its checkbox.
+   * collapsed (`useChatListNarrow`). The rows then carry their unread count on the avatar, have no
+   * room for their folder tags, and cannot be selected: they could not be told apart, nor open the
+   * lane a selected row makes for its checkbox.
    */
   public isChatListNarrow() {
-    return !!this.forumTab || appSidebarLeft.isCollapsed();
+    return untrack(useChatListNarrow());
   }
 
   /** Ends a selection of chats that the list has narrowed under (see `isChatListNarrow`) */
   public onChatListNarrowChange() {
     if(this.selection.isSelecting && this.isChatListNarrow()) {
       this.selection.cancelSelection();
+    }
+  }
+
+  // * a reload of the folders updates them one by one
+  private scheduleFolderTagsRefresh = debounce(() => this.refreshFolderTags(), 0, false, true);
+
+  /** Hands every row with folder tags its dialog again, with the indexes the folders have now */
+  private refreshFolderTags() {
+    if(!untrack(useFolderTagsShown())) {
+      return;
+    }
+
+    const elementsByPeerId = new Map<PeerId, DialogElement[]>();
+    for(const filterId in this.xds) {
+      const sortedList = this.xds[filterId].sortedList;
+      if(!sortedList) continue;
+      for(const [peerId, element] of sortedList.getAllDialogElementsMap()) {
+        if(!element.folderTags) continue;
+        let elements = elementsByPeerId.get(peerId);
+        if(!elements) elementsByPeerId.set(peerId, elements = []);
+        elements.push(element);
+      }
+    }
+
+    for(const [peerId, elements] of elementsByPeerId) {
+      this.managers.appMessagesManager.getDialogOnly(peerId).then((dialog) => {
+        if(!dialog) return;
+        elements.forEach((element) => element.folderTags?.setDialog(dialog));
+      });
     }
   }
 
@@ -1230,6 +1394,20 @@ export class AppDialogsManager {
       if(!this.filtersRendered[filter.id]) {
         this.addFilter(filter);
       }
+    });
+
+    // * the folders a chat is in are read off its dialog, which a row only gets anew with an update
+    // * of the chat: a folder that changes what it holds - or its place, which renames its index -
+    // * leaves every row with the tags of before
+    (['filter_update', 'filter_new', 'filter_delete', 'filter_order'] as const).forEach((type) => {
+      rootScope.addEventListener(type, this.scheduleFolderTagsRefresh);
+    });
+
+    createRoot(() => {
+      const shown = useFolderTagsShown();
+      createEffect(on(shown, (shown) => {
+        shown && this.scheduleFolderTagsRefresh();
+      }, {defer: true}));
     });
 
     rootScope.addEventListener('filter_delete', (filter) => {
@@ -2238,7 +2416,6 @@ export class AppDialogsManager {
         return;
       }
 
-
       if(peer?._ === 'user' && peer?.pFlags?.bot_forum_view && !lastMsgId && !threadId && !elem.dataset.isAllChats && !e.shiftKey) {
         this.toggleForumTabByPeerId(peerId).then(() => {
           if(appImManager.chat?.peerId?.toUserId() !== peer.id && !mediaSizes.isLessThanFloatingLeftSidebar) openChat();
@@ -2316,7 +2493,7 @@ export class AppDialogsManager {
       // guard that lives in that listener rather than in `onPress`, so the story
       // check has to be repeated here. `e.button` is 0 for a keyboard click and
       // `isDialogListAction` is already ruled out above.
-      if(e.detail === 0 && !setWillOpenStory(e)) {
+      if(Modes.a11y && e.detail === 0 && !setWillOpenStory(e)) {
         onPress(e);
       }
 
@@ -2455,6 +2632,7 @@ export class AppDialogsManager {
     const message = lastMessage as Message.message;
     const media = lastMessage && getMediaFromMessage(lastMessage, true);
     const messageMedia = message?.media as MessageMedia.messageMediaPhoto | MessageMedia.messageMediaDocument;
+    const draftContent = draftMessage && getMessageForReplyContent(draftMessage);
 
     return [
       options.peerId,
@@ -2466,6 +2644,11 @@ export class AppDialogsManager {
       options.isSensitive,
       draftMessage?.date,
       draftMessage?.message,
+      draftContent?.text,
+      draftContent?.entities && JSON.stringify(
+        draftContent.entities,
+        (_key, value) => typeof(value) === 'bigint' ? value.toString() : value
+      ),
       lastMessage?._,
       lastMessage?.peerId,
       lastMessage?.mid,
@@ -2554,7 +2737,7 @@ export class AppDialogsManager {
       const emptySubtitle = this.getEmptySubtitle(peerId, dom.listEl);
 
       disposeTextHighlight(dom);
-      dom.lastMessageSpan.replaceChildren(...(emptySubtitle ? [emptySubtitle] : []));
+      setDialogSubtitle(dom, emptySubtitle ? [emptySubtitle] : []);
       dom.lastTimeSpan.replaceChildren();
       delete dom.listEl.dataset.mid;
       delete dom.listEl.dataset.searchQuery;
@@ -2640,6 +2823,7 @@ export class AppDialogsManager {
         noForwardIcon,
         mediaParts,
         withoutMediaType,
+        withoutMessageIcon: !!mediaContainer,
         prependPeerId: subtitlePeerId,
         middleware,
         messageRenderer: wrapMessageForReply,
@@ -2650,7 +2834,7 @@ export class AppDialogsManager {
       });
       dom.lastMessageSpan.classList.add('dialog-subtitle-parts');
       disposeTextHighlight(dom);
-      dom.lastMessageSpan.replaceChildren(...parts);
+      setDialogSubtitle(dom, parts);
       renderedParts = parts;
 
       // * the last part is the message text itself (the ones before are the sender, the
@@ -2695,6 +2879,9 @@ export class AppDialogsManager {
       // this.log.error('setUnreadMessages no dom!', dialog);
       return;
     }
+
+    // * every update of the dialog comes through here, and with it the folders the chat is now in
+    dialogElement.folderTags?.setDialog(dialog);
 
     const isTopic = isForumTopic(dialog);
     const isSaved = isSavedDialog(dialog);
@@ -2784,6 +2971,15 @@ export class AppDialogsManager {
     });
     const hasReactionsBadge = isSaved ? false : !!dialog.unread_reactions_count;
     const hasPollVotesBadge = isSaved || isMonoforumThread ? false : !!(dialog as Dialog | ForumTopic).unread_poll_votes_count;
+    // * a bot's main mini app opens right from its row in the chat list, as in the official apps -
+    // * where the row has nothing unread to show in its place
+    dialogElement.hasBotMainApp = peerId.isUser() && !!apiManagerProxy.getUser(peerId.toUserId())?.pFlags?.bot_has_main_app;
+    const hasBotAppButton = !!dialogElement.isMainList &&
+      dialogElement.hasBotMainApp &&
+      !hasUnreadBadge &&
+      !hasMentionsBadge &&
+      !hasReactionsBadge &&
+      !hasPollVotesBadge;
     let unreadBadgeText: string;
     if(hasUnreadBadge) {
       // dom.unreadMessagesSpan.innerText = '' + (unreadCount ? formatNumber(unreadCount, 1) : ' ');
@@ -2795,12 +2991,14 @@ export class AppDialogsManager {
       pinned: hasPinnedBadge,
       unread: hasUnreadBadge,
       unreadText: unreadBadgeText,
+      unreadCount,
       unreadMention: isMention,
       unreadAvatar: hasUnreadAvatarBadge,
       unreadAvatarText: unreadBadgeText || undefined,
       mentions: hasMentionsBadge,
       reactions: hasReactionsBadge,
       pollVotes: hasPollVotesBadge,
+      botApp: hasBotAppButton,
       transitionDuration
     });
 
@@ -3059,7 +3257,6 @@ export class AppDialogsManager {
     });
   }
 }
-
 
 const appDialogsManager = new AppDialogsManager();
 MOUNT_CLASS_TO.appDialogsManager = appDialogsManager;

@@ -1,5 +1,30 @@
 @use "../shared" as *;
 
+// * the status keeps the anchor of the line as it crossfades and resizes (`crossfadeContent`): its
+// * centre where the line stays centred - the old status and the new, overflowing the resizing
+// * box or not - and its start where the line stays put at its start
+@mixin status-leaving-anchor($centred) {
+  .profile-subtitle-status {
+    @if $centred {
+      justify-content: center;
+
+      .crossfade-leaving {
+        inset-inline-start: auto;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+    } @else {
+      justify-content: flex-start;
+
+      .crossfade-leaving {
+        left: auto;
+        inset-inline-start: 0;
+        transform: none;
+      }
+    }
+  }
+}
+
 .profile {
   &-avatars {
     &-container {
@@ -133,7 +158,7 @@
         --size: 420px;
         opacity: 0;
 
-        @include animation-level(2) {
+        @include animation-level(1) {
           transition: opacity var(--transition-standard-in);
         }
       }
@@ -171,8 +196,11 @@
         transition-delay: 0s, 0s;
         transform: scale(1);
 
-        @include animation-level(2) {
-          transition: opacity .05s, transform var(--transition-standard-in);
+        @include animation-level-transition(opacity .05s, transform var(--transition-standard-in));
+
+        // reduced: no shrink to time its fade by - it fades on a clock of its own
+        @include animation-level-only(1) {
+          transition: opacity var(--transition-standard-out);
         }
       }
 
@@ -194,7 +222,7 @@
       background: linear-gradient(360deg, rgba(0, 0, 0, .3) 8.98%, rgba(0, 0, 0, 0) 100%);
       pointer-events: none;
 
-      @include animation-level(2) {
+      @include animation-level(1) {
         opacity: 1;
         transition: opacity var(--transition-standard-easing) calc(var(--transition-standard-in-time) / 2);
         transition-delay: calc(var(--transition-standard-in-time) / 2);
@@ -222,9 +250,7 @@
         bottom: 1.9375rem;
       }
 
-      @include animation-level(2) {
-        transition: transform var(--transition-standard-in), color var(--transition-standard-in), bottom var(--transition-standard-in);
-      }
+      @include animation-level-transition(transform var(--transition-standard-in), color var(--transition-standard-in), bottom var(--transition-standard-in));
 
       .profile-name,
       .profile-subtitle {
@@ -236,9 +262,16 @@
         position: relative;
         white-space: nowrap;
 
+        // the width follows the place it moves to, so it goes along with it: at once, with reduced animations
+        @include animation-level(1) {
+          transition: color var(--transition-standard-in);
+        }
+
         @include animation-level(2) {
           transition: inset-inline-start var(--transition-standard-in), transform var(--transition-standard-in), color var(--transition-standard-in), max-width var(--transition-standard-in);
         }
+
+        @include status-leaving-anchor(false);
       }
 
       .emoji-status {
@@ -251,7 +284,7 @@
         
         &-text {
           opacity: var(--secondary-opacity-max);
-          @include animation-level(2) {
+          @include animation-level(1) {
             transition: opacity var(--transition-standard-in);
           }
         }
@@ -272,7 +305,7 @@
       }
 
       .premium-icon {
-        @include animation-level(2) {
+        @include animation-level(1) {
           transition: color var(--transition-standard-in), opacity var(--transition-standard-in);
         }
       }
@@ -287,7 +320,7 @@
       height: .125rem;
       pointer-events: none;
 
-      @include animation-level(2) {
+      @include animation-level(1) {
         opacity: 1;
         transition: opacity var(--transition-standard-in);
       }
@@ -335,11 +368,11 @@
       width: calc(100% / 3);
       opacity: 0;
 
-      &:focus-visible {
+      :where(.a11y) &:focus-visible {
         opacity: 1;
       }
 
-      @include animation-level(2) {
+      @include animation-level(1) {
         transition: opacity .2s ease-in-out;
       }
 
@@ -486,7 +519,7 @@
         opacity: 0 !important;
       }
 
-      .profile-avatars-arrow {
+      :where(.a11y) & .profile-avatars-arrow {
         visibility: hidden;
       }
 
@@ -504,6 +537,8 @@
           transform: translateX(-50%);
         }
 
+        @include status-leaving-anchor(true);
+
         .profile-name {
           max-width: 21.25rem;
         }
@@ -519,6 +554,12 @@
         opacity: 0;
         transform: scale(.8916666667);
         transition-delay: calc(var(--transition-standard-in-time) - .05s), 0s;
+
+        // reduced: it fades out where it stands, at once
+        @include animation-level-below(2) {
+          transform: none;
+          transition-delay: 0s;
+        }
       }
 
       .profile-subtitle-text,
@@ -625,19 +666,19 @@
       inset-inline: 0;
       z-index: 3;
 
-      @include animation-level(2) {
+      @include animation-level(1) {
         transition: background-color var(--transition);
       }
 
       &:after {
-        @include animation-level(2) {
+        @include animation-level(1) {
           transition: opacity var(--transition);
         }
       }
 
       .sidebar-header__title,
       .btn-icon {
-        @include animation-level(2) {
+        @include animation-level(1) {
           transition: color var(--transition);
         }
       }
@@ -726,6 +767,21 @@
     .online {
       color: var(--primary-color);
     }
+
+    // * a box of its own, which what it showed fades out over (`crossfadeContent`) - an inline one
+    // * would leave that a line of another height - and which the new status resizes. What fades
+    // * out is not cut to the new status
+    &-status {
+      display: inline-flex;
+
+      .crossfade-leaving {
+        inset-inline-end: auto;
+        width: max-content;
+        overflow: visible;
+      }
+    }
+
+    @include status-leaving-anchor(true);
 
     .show-when {
       margin-inline-start: .25rem;

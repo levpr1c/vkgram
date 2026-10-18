@@ -52,7 +52,10 @@
     cursor: pointer;
     pointer-events: all;
     overflow: hidden;
-    transition: bottom var(--transition-standard-out);
+
+    @include animation-level(2) {
+      transition: bottom var(--transition-standard-out);
+    }
 
     .bubbles.is-selecting & {
       transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
@@ -246,7 +249,7 @@
       &.is-hiding {
         opacity: 0 !important;
 
-        @include animation-level(2) {
+        @include animation-level(1) {
           transition: opacity var(--transition-standard-out);
         }
       }
@@ -500,8 +503,11 @@
     justify-content: center;
     box-shadow: var(--menu-box-shadow);
 
-    @include animation-level(2) {
-      transition: opacity var(--btn-corner-transition), transform var(--btn-corner-transition);
+    @include animation-level-transition(opacity var(--btn-corner-transition), transform var(--btn-corner-transition));
+
+    // reduced: it fades where it stands, in and out
+    @include animation-level-below(2) {
+      transform: none;
     }
 
     &.is-visible {
@@ -627,6 +633,10 @@
 
     html.no-touch &.with-hover {
       opacity: 0;
+    }
+
+    html.no-touch body.animation-level-1 & {
+      transition: opacity .2s ease-in-out;
     }
 
     html.no-touch body.animation-level-2 & {
@@ -1042,7 +1052,7 @@
     }
   }
 
-  .anchor-url:not(.reply-markup-button),
+  .anchor-url:not(.reply-markup-button):not(.rich-button-link),
   .mention {
     @include hover() {
       text-decoration: underline !important;
@@ -1128,6 +1138,7 @@
     .floating-part {
       --primary-color: #fff;
       --primary-color-rgb: 255, 255, 255;
+      --link-plate-color: #{$link-plate-service-color};
       --ripple-color: rgba(var(--primary-color-rgb), .1);
       // padding: .375rem .5rem;
       border-radius: .25rem;
@@ -1327,40 +1338,8 @@
     }
   }
 
-  &.contact-message,
   &.call-message {
     --min-content-width: 200px;
-  }
-
-  &.contact-message {
-    .contact {
-      display: flex;
-      padding: 2px 0;
-      cursor: pointer;
-      user-select: none;
-
-      &-avatar {
-        color: #fff;
-      }
-
-      &-details {
-        padding-left: 12px;
-        margin-top: 8px;
-        display: flex;
-        flex-direction: column;
-      }
-
-      &-name {
-        font-size: 1rem;
-        font-weight: var(--font-weight-bold);
-      }
-
-      &-number {
-        font-size: 14px;
-        line-height: 1.4;
-        color: var(--message-status-color);
-      }
-    }
   }
 
   &.document-message {
@@ -1635,17 +1614,9 @@
     // }
   }
 
-  &.poll-message,
-  &.contact-message {
-    .time {
-      position: absolute;
-      right: 0;
-      bottom: 0;
-    }
-  }
-
   &.poll-message {
     .time {
+      position: absolute;
       right: 8px;
       bottom: 5px;
     }
@@ -1831,7 +1802,7 @@
       z-index: 2;
       opacity: 1;
 
-      @include animation-level(2) {
+      @include animation-level(1) {
         transition: opacity var(--transition-standard-in);
       }
 
@@ -1904,7 +1875,7 @@
     line-height: 1;
     opacity: 1;
 
-    @include animation-level(2) {
+    @include animation-level(1) {
       transition: opacity var(--transition-standard-in);
     }
 
@@ -1968,7 +1939,8 @@
 
   // * mini player section end
 
-  .anchor-url {
+  // a rich message's link button is drawn as a button
+  .anchor-url:not(.rich-button-link) {
     text-decoration: underline;
   }
 
@@ -1996,13 +1968,24 @@
     font-size: var(--messages-secondary-text-size);
     line-height: calc(var(--messages-secondary-text-size) + .25rem);
     max-width: 100%;
-    overflow: hidden;
+    // cut off for the ellipsis, but not the ripple of a held name, whose plate reaches past its text
+    // (helpers/dom/linkPress.ts); `clip` makes no formatting context of its own, `flow-root` does
+    display: flow-root;
+    overflow: clip;
+    overflow-clip-margin: $link-plate-bleed;
     text-overflow: ellipsis;
     user-select: none;
 
     .badge-fake {
       display: inline-block;
       vertical-align: text-bottom;
+    }
+
+    // a name with icons is a flex row: it hugs them as a plain name hugs its text, so that what is
+    // pressed (the ripple of helpers/dom/linkPress.ts) and clicked is the name, not the whole line
+    > .peer-title.with-icons,
+    .name-first-line > .peer-title.with-icons {
+      width: fit-content;
     }
   }
 
@@ -2026,6 +2009,8 @@
     // align-items: center;
     max-width: inherit;
     overflow: inherit;
+    // the margin `.name` clips with (it is not inherited by itself)
+    overflow-clip-margin: inherit;
 
     &-topic {
       > .bubble-name-rank,
@@ -2298,7 +2283,7 @@
 
   .name-with-reply {
     .name {
-      display: block;
+      display: flow-root;
       padding: 0 !important;
       margin: 0;
 
@@ -2683,16 +2668,14 @@
   color: var(--primary-text-color);
   display: block;
 
+  // * a shared contact is pressed, not read: never selected, as before it became a preview
+  &.is-contact {
+    user-select: none;
+  }
+
   & + .time {
     display: block;
     float: unset;
-  }
-
-  &-background-canvas {
-    position: absolute;
-    top: 0;
-    inset-inline-end: 0;
-    pointer-events: none;
   }
 
   .audio-transcribed-text {
@@ -2907,18 +2890,97 @@
       @include text-overflow(false);
     }
 
+    // * The button reaches from the box's border line to its edge, past the content's padding, so a
+    // * press and its ripple take the whole width; the separator keeps to the text's width, as
+    // * tdesktop draws it (history_view_web_page.cpp, `inner.width()`). It is drawn inside the
+    // * padding, since the button's `overflow: hidden` would clip a border-box line
     &.is-button {
       margin-bottom: #{-$webpage-padding-vertical};
+      margin-inline: #{-$webpage-padding};
+      border-top: 0;
       line-height: $height;
       font-size: var(--messages-text-size);
       text-align: center;
       font-weight: var(--font-weight-bold);
       height: #{$height + $margin + $border};
-      padding: #{math.div($margin, 2)} .5rem 0;
+      padding: #{math.div($margin, 2) + $border} #{$webpage-padding + .5rem} 0;
       pointer-events: none;
-      width: 100%;
+      // * below a square thumbnail floating beside short text: a box that clips its overflow would
+      // * otherwise narrow itself to sit next to the float
+      clear: both;
+      @include text-overflow(true);
+
+      &:before {
+        content: "";
+        position: absolute;
+        top: 0;
+        inset-inline: $webpage-padding;
+        height: $border;
+        background-color: rgba(var(--primary-color-rgb, 0, 0, 0), .2);
+      }
+
+      // * where it stood before the button reached past the padding and lost its border
+      #{$parent}-footer-icon {
+        top: #{.125rem + $border};
+        right: #{$webpage-padding - .125rem};
+      }
+    }
+
+    // * The same button, split into buttons of their own (a shared contact's MESSAGE | ADD): each
+    // * takes the caption's padding, so the press and its ripple reach the line above. Columns of
+    // * `1fr` are as wide as the widest button, and make the box wide enough for all of them
+    &.is-split {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+      padding: #{$border} 0 0;
+    }
+
+    &-button {
+      padding: #{math.div($margin, 2)} .5rem 0;
+      pointer-events: auto;
+      cursor: pointer;
+      // * above the box's own ripple, which would take the press otherwise
+      position: relative;
+      z-index: 1;
+      // * a <button> with the a11y layer
+      border: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
       @include text-overflow(true);
     }
+  }
+
+  // * a round picture at the start, with the name and text beside it (a shared contact)
+  // * the picture keeps to the top, as tdesktop draws it, however many lines the text runs to
+  &-with-thumb {
+    display: flex;
+    align-items: flex-start;
+    gap: .625rem;
+    padding: .125rem 0;
+
+    &-texts {
+      flex: 1 1 auto;
+      min-width: 0;
+
+      #{$parent}-name,
+      #{$parent}-text {
+        @include text-overflow(true);
+      }
+
+      // * a line each (a contact's phones, emails, organization), every one cut short on its own
+      #{$parent}-text {
+        white-space: pre;
+      }
+    }
+  }
+
+  // * the picture is part of the box's own control: a photo avatar would take the press for the
+  // * peer it shows, and open the chat where the box opens the vCard
+  &-thumb {
+    flex: 0 0 auto;
+    pointer-events: none;
   }
 }
 
@@ -3244,6 +3306,7 @@
 
 .bubble.service, .bubble.has-fake-service {
   .service-msg {
+    --link-plate-color: #{$link-plate-service-color};
     color: #fff;
     //background-color: rgba(0, 0, 0, .24);
     background-color: var(--message-highlighting-color);
@@ -3411,7 +3474,6 @@
   }
 
   .audio-subtitle,
-  .contact-number,
   .audio-time {
     color: var(--secondary-text-color) !important;
   }
@@ -3888,7 +3950,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
 
-  @include animation-level(2) {
+  @include animation-level(1) {
     .bubble-content-wrapper {
       transition: var(--bubble-transition-in);
     }
@@ -3902,6 +3964,11 @@
       transform: translateX(0) scale3d(.8, .8, 1);
       //transform: scale(.8) translateX(0);
       opacity: 0;
+
+      // reduced: it fades where it stands
+      @include animation-level-only(1) {
+        transform: none;
+      }
     }
   }
 

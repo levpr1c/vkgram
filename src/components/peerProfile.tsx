@@ -17,15 +17,16 @@ import classNames from '@helpers/string/classNames';
 import Row from '@components/rowTsx';
 import formatUserPhone from '@components/wrappers/formatUserPhone';
 import {copyTextToClipboard} from '@helpers/clipboard';
+import {copyPhoneNumber, copyUsername} from '@helpers/copyContact';
 import safeWindowOpen from '@helpers/dom/safeWindowOpen';
 import anchorCopy from '@helpers/dom/anchorCopy';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import isCollectibleUsername from '@appManagers/utils/peers/isCollectibleUsername';
 import {appState, useAppConfig} from '@stores/appState';
 import {useCommunity, useCommunityFull} from '@stores/communities';
 import detectLanguageForTranslation from '@helpers/detectLanguageForTranslation';
 import usePeerTranslation from '@hooks/usePeerTranslation';
-import makeGoogleMapsUrl from '@helpers/makeGoogleMapsUrl';
 import getWebFileLocation from '@helpers/getWebFileLocation';
 import CheckboxFieldTsx from '@components/checkboxFieldTsx';
 import {subscribeOn} from '@helpers/solid/subscribeOn';
@@ -50,6 +51,7 @@ import {MyDocument} from '../lib/appManagers/appDocsManager';
 import wrapEmojiText, {EmojiTextTsx} from '@lib/richTextProcessor/wrapEmojiText';
 import {wrapSolidComponent} from '../helpers/solid/wrapSolidComponent';
 import showStarGiftInfoPopup from './popups/starGiftInfo';
+import showCollectibleInfoPopup from '@components/popups/collectibleInfo';
 import {openSavedMusicTab} from '@components/savedMusicActions';
 import ripple from '@components/ripple';
 import {keepMe} from '@helpers/keepMe';
@@ -92,11 +94,26 @@ type PeerProfileContextValue = {
 
 const PeerProfileContext = createContext<PeerProfileContextValue>();
 
-function getUsernamesAlso(usernames: string[]) {
+/**
+ * A click on a username copies it, or — for one bought on Fragment — tells who owns it, as tdesktop
+ * does. `copy` is the plain click, and the fallback when the server knows of no such collectible.
+ */
+function onUsernameClick(peerId: PeerId, peer: User.user | Chat.channel, username: string, copy: () => void) {
+  if(isCollectibleUsername(peer, username)) {
+    showCollectibleInfoPopup({peerId, username, onFail: copy});
+  } else {
+    copy();
+  }
+}
+
+function getUsernamesAlso(peerId: PeerId, peer: User.user | Chat.channel, usernames: string[]) {
   const {i18n, join} = useHotReloadGuard();
   const also = usernames.slice(1);
   if(also.length) {
-    const a = also.map((username) => anchorCopy({username}));
+    const a = also.map((username) => anchorCopy({
+      username,
+      onClick: (copy) => onUsernameClick(peerId, peer, username, copy)
+    }));
     const i = i18n('UsernameAlso', [join(a, false)]);
     return i;
   }
@@ -377,7 +394,7 @@ PeerProfile.SubtitleStatus = () => {
     }
 
     let span: HTMLSpanElement;
-    const ret = (<span ref={span}></span>);
+    const ret = (<span ref={span} class="profile-subtitle-status"></span>);
     let first = true;
     const [ready, {refetch}] = createResource(() => {
       const _first = first;
@@ -388,7 +405,9 @@ PeerProfile.SubtitleStatus = () => {
         needClear: _first,
         useWhitespace: true,
         middleware,
-        ignoreSelf: !isDialog
+        ignoreSelf: !isDialog,
+        // * the rating badge stands beside it
+        resize: true
       }).then((callback) => (callback?.(), true));
     });
 
@@ -644,7 +663,7 @@ PeerProfile.PinnedMusic = () => {
 
 PeerProfile.Phone = () => {
   const context = useContext(PeerProfileContext);
-  const {I18n, i18n, toast} = useHotReloadGuard();
+  const {i18n} = useHotReloadGuard();
   const appConfig = useAppConfig();
 
   const phoneDetails = createMemo(() => {
@@ -664,20 +683,24 @@ PeerProfile.Phone = () => {
     };
   });
 
-  const copyPhoneNumber = () => {
-    copyTextToClipboard(phoneDetails().formatted.replace(/\s/g, ''));
-    toast(I18n.format('PhoneCopied', true));
+  const copyPhone = () => copyPhoneNumber(phoneDetails().formatted);
+
+  // an anonymous number tells who bought it, as tdesktop does
+  const onClick = () => {
+    const {phone, isAnonymous} = phoneDetails();
+    if(isAnonymous) showCollectibleInfoPopup({peerId: context.peerId, phone, onFail: copyPhone});
+    else copyPhone();
   };
 
   return (
     <Show when={!!phoneDetails()?.phone}>
       <Row
-        clickable={copyPhoneNumber}
+        clickable={onClick}
         contextMenu={{
           buttons: [{
             icon: 'copy',
             text: 'Text.CopyLabel_PhoneNumber',
-            onClick: copyPhoneNumber
+            onClick: copyPhone
           }, {
             icon: 'info',
             text: 'PeerInfo.Phone.AnonymousInfo',
@@ -704,7 +727,7 @@ PeerProfile.Phone = () => {
 
 PeerProfile.Username = () => {
   const context = useContext(PeerProfileContext);
-  const {I18n, i18n, toast, showMyQrCodePopup, rootScope} = useHotReloadGuard();
+  const {i18n} = useHotReloadGuard();
   const usernames = createMemo(() => {
     if(!context.peerId.isUser() || !context.canBeDetailed()) {
       return;
@@ -715,27 +738,24 @@ PeerProfile.Username = () => {
 
   const mainUsername = createMemo(() => usernames()?.[0]);
 
-  const onClick = () => {
-    copyTextToClipboard('@' + mainUsername());
-    toast(I18n.format('UsernameCopied', true));
-  };
+  const copyMainUsername = () => copyUsername(mainUsername());
 
   return (
     <Show when={usernames()?.length}>
       <Row
-        clickable={onClick}
+        clickable={() => onUsernameClick(context.peerId, context.peer as User.user, mainUsername(), copyMainUsername)}
         contextMenu={{
           buttons: [{
             icon: 'copy',
             text: 'Text.CopyLabel_Username',
-            onClick: onClick
+            onClick: copyMainUsername
           }]
         }}
       >
         <Row.Icon icon="mention_filled" />
         <Row.Title>{mainUsername()}</Row.Title>
         <Row.Subtitle>{
-          getUsernamesAlso(usernames()) || i18n('Username')
+          getUsernamesAlso(context.peerId, context.peer as User.user, usernames()) || i18n('Username')
         }</Row.Subtitle>
         <PeerProfile.QrButton />
       </Row>
@@ -986,7 +1006,8 @@ PeerProfile.Link = () => {
   const context = useContext(PeerProfileContext);
   const {i18n, I18n, toast, showMyQrCodePopup} = useHotReloadGuard();
 
-  const toFill = createMemo<Partial<{url: string, also: JSX.Element}>>(() => {
+  // `username` only where the link is the bare username one — a topic's link is not
+  const toFill = createMemo<Partial<{url: string, username: string, also: JSX.Element}>>(() => {
     if(context.peerId.isUser()) {
       return;
     }
@@ -1008,7 +1029,8 @@ PeerProfile.Link = () => {
     if(usernames.length) {
       return {
         url: 't.me/' + usernames[0],
-        also: getUsernamesAlso(usernames)
+        username: usernames[0],
+        also: getUsernamesAlso(context.peerId, context.peer as Chat.channel, usernames)
       };
     }
 
@@ -1020,7 +1042,7 @@ PeerProfile.Link = () => {
     }
   });
 
-  const onClick = () => {
+  const copyLink = () => {
     const url = 'https://' + toFill().url;
     copyTextToClipboard(url);
     // Promise.resolve(appProfileManager.getChatFull(this.peerId.toChatId())).then((chatFull) => {
@@ -1028,6 +1050,12 @@ PeerProfile.Link = () => {
     const isPrivate = url.includes('/c/');
     toast(I18n.format(isPrivate ? 'LinkCopiedPrivateInfo' : 'LinkCopied', true));
     // });
+  };
+
+  const onClick = () => {
+    const {username} = toFill();
+    if(username) onUsernameClick(context.peerId, context.peer as Chat.channel, username, copyLink);
+    else copyLink();
   };
 
   return (
@@ -1038,7 +1066,7 @@ PeerProfile.Link = () => {
           buttons: [{
             icon: 'copy',
             text: 'Text.CopyLabel_ShareLink',
-            onClick
+            onClick: copyLink
           }]
         }}
       >
@@ -1103,7 +1131,7 @@ PeerProfile.BotReport = () => {
   return (
     <Show when={canReport()}>
       <Row clickable={() => showPeerReport(context.peerId)}>
-        <Row.Icon icon="flag" />
+        <Row.Icon icon="flag_filled" />
         <Row.Title>{i18n('ReportChat')}</Row.Title>
       </Row>
     </Show>
@@ -1143,7 +1171,7 @@ PeerProfile.BusinessHours = () => {
 
 PeerProfile.BusinessLocation = () => {
   const context = useContext(PeerProfileContext);
-  const {i18n, wrapPhoto, wrapEmojiText, confirmationPopup, toastNew} = useHotReloadGuard();
+  const {i18n, wrapPhoto, wrapEmojiText, confirmOpenGoogleMaps, toastNew} = useHotReloadGuard();
   const location = createMemo(() => (context.fullPeer as UserFull)?.business_location);
 
   const copyAddress = () => {
@@ -1158,14 +1186,7 @@ PeerProfile.BusinessLocation = () => {
       return;
     }
 
-    await confirmationPopup({
-      descriptionLangKey: 'Popup.OpenInGoogleMaps',
-      button: {
-        langKey: 'Open'
-      }
-    });
-
-    safeWindowOpen(makeGoogleMapsUrl(_location.geo_point as GeoPoint.geoPoint));
+    await confirmOpenGoogleMaps(_location.geo_point as GeoPoint.geoPoint);
   };
 
   return (

@@ -1,4 +1,4 @@
-import {createContext, useContext, createSignal, onCleanup, JSX, Show, createRoot, Accessor, createEffect, createRenderEffect, untrack, on, Ref, Setter, onMount} from 'solid-js';
+import {createContext, useContext, createSignal, createMemo, onCleanup, JSX, Show, createRoot, Accessor, createEffect, createRenderEffect, untrack, on, Ref, Setter, onMount} from 'solid-js';
 import {createStore} from 'solid-js/store';
 import {Portal} from 'solid-js/web';
 import classNames from '@helpers/string/classNames';
@@ -13,17 +13,21 @@ import appNavigationController, {NavigationItem} from '@components/appNavigation
 import {addFullScreenListener, getFullScreenElement} from '@helpers/dom/fullScreen';
 import {bindActiveWindowListener, getOverlayRoot} from '@helpers/appWindow';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
-import MarkupTooltip from '@components/chat/markupTooltip';
+import tooltipController from '@helpers/tooltipController';
 import Button from '@components/buttonTsx';
 import {putPreloader} from '@components/putPreloader';
 import {doubleRaf} from '@helpers/schedulers';
 import Scrollable, {ScrollableContextValue} from '@components/scrollable2';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {simulateClickEvent} from '@helpers/dom/clickEvent';
-import isSendShortcutPressed from '@helpers/dom/isSendShortcutPressed';
+import isSendShortcutPressed, {isSendShortcutLeft} from '@helpers/dom/isSendShortcutPressed';
 import noop from '@helpers/noop';
+import blurActiveElement from '@helpers/dom/blurActiveElement';
+import Modes from '@config/modes';
 import createFocusTrap, {FocusTrap} from '@helpers/dom/focusTrap';
 import isKeyboardControl from '@helpers/dom/isKeyboardControl';
+import isTargetAnInput from '@helpers/dom/isTargetAnInput';
+import placeCaretAtEnd from '@helpers/dom/placeCaretAtEnd';
 import updateScrollRegionFocusable from '@helpers/dom/scrollRegion';
 
 export type PopupButton = {
@@ -49,6 +53,11 @@ export type PopupOptions = Partial<{
   confirmShortcutIsSendShortcut: boolean,
   withoutOverlay: boolean,
   btnConfirmOnEnter?: Accessor<HTMLElement>,
+  /**
+   * Where the focus goes on open instead of the first control (the close button). A text field
+   * takes the caret at its end, after whatever is already in it.
+   */
+  initialFocus?: Accessor<HTMLElement | undefined>,
   old: boolean
 }>;
 
@@ -104,10 +113,12 @@ type PopupControllerContextValue = {
 export const PopupContext = createContext<PopupContextValue>();
 export const usePopupContext = () => useContext(PopupContext);
 const PopupControllerContext = createContext<PopupControllerContextValue>();
+/** Inside `createPopup`: disposes the popup's root — for a popup that has to go before it ever showed. */
+export const usePopupController = () => useContext(PopupControllerContext);
 
 const DEFAULT_APPEND_TO = document.body;
-// A fullscreen element always wins; otherwise each popup uses the realm it captured at creation
-// (see the Portal mount below). Only the fullscreen state is reactive here.
+// A fullscreen element wins, unless it is the popup's own part; otherwise each popup uses the realm
+// it captured at creation (see the Portal mount below). Only the fullscreen state is reactive here.
 const [fullScreenElement, setFullScreenElement] = createSignal<HTMLElement>(null);
 
 const onFullScreenChange = () => {
@@ -182,10 +193,11 @@ const PopupElement = (props: {
 
     const realmDocument = capturedRoot.ownerDocument || document;
     previouslyFocusedEl = realmDocument.activeElement as HTMLElement;
+    tooltipController.closeAll();
     setShown(true);
     const navItem: NavigationItem = {
       type: 'popup',
-      noBlurOnPop: true,
+      noBlurOnPop: Modes.a11y,
       onPop: () => {
         if(isConfirmationNeededOnClose) {
           const result = isConfirmationNeededOnClose();
@@ -202,7 +214,8 @@ const PopupElement = (props: {
     setNavigationItem(navItem);
     appNavigationController.pushItem(navItem);
 
-    if(!withoutOverlay) previouslyFocusedEl?.blur?.();
+    if(!Modes.a11y) blurActiveElement();
+    else if(!withoutOverlay) previouslyFocusedEl?.blur?.();
 
     if(!withoutOverlay) {
       overlayCounter.isOverlayActive = true;
@@ -225,18 +238,21 @@ const PopupElement = (props: {
           container.setAttribute('aria-labelledby', titleEl.id);
         }
 
-        if(!withoutOverlay) {
+        if(!withoutOverlay && Modes.a11y) {
           focusTrap = createFocusTrap(
             container,
             () => PopupElement.POPUPS[PopupElement.POPUPS.length - 1] === value
           );
-          focusTrap.activate(previouslyFocusedEl);
+          const initialFocus = props.initialFocus?.();
+          focusTrap.activate(previouslyFocusedEl, initialFocus);
+          if(initialFocus && isTargetAnInput(initialFocus)) placeCaretAtEnd(initialFocus);
         }
       }
 
       const handleKeydown = (e: KeyboardEvent) => {
         const btnConfirm = value.btnConfirmOnEnter;
-        if(e.defaultPrevented || e.isComposing || e.repeat || !btnConfirm ||
+        // closed already: its listener goes with its fade
+        if(destroyed() || (e.defaultPrevented && !isSendShortcutLeft(e)) || e.isComposing || e.repeat || !btnConfirm ||
            (btnConfirm as HTMLButtonElement).disabled ||
            PopupElement.POPUPS[PopupElement.POPUPS.length - 1] !== value) {
           return;
@@ -246,8 +262,8 @@ const PopupElement = (props: {
         // Native buttons and composite controls own Enter themselves. The popup
         // shortcut is for submitting from an input, never for overriding Cancel,
         // a link, a combobox selection or a menu action.
-        if(isKeyboardControl(target) || target.closest('[role="combobox"][aria-expanded="true"]') ||
-          !confirmShortcutIsSendShortcut && (target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        if(Modes.a11y && (isKeyboardControl(target) || target.closest('[role="combobox"][aria-expanded="true"]') ||
+          !confirmShortcutIsSendShortcut && (target.tagName === 'TEXTAREA' || target.isContentEditable))) {
           return;
         }
 
@@ -287,7 +303,7 @@ const PopupElement = (props: {
       setHiding(false);
       middlewareHelper.destroy();
       controllerContext.dispose(); // * call it here for the content
-      MarkupTooltip.getInstance().hide();
+      tooltipController.closeAll();
 
       if(!withoutOverlay) {
         overlayCounter.isOverlayActive = false;
@@ -316,6 +332,14 @@ const PopupElement = (props: {
   const [destroyed, setDestroyed] = createSignal(false);
   const [hiding, setHiding] = createSignal(false);
   const [popupElement, setPopupElement] = createSignal<HTMLElement>();
+  // Whatever goes full screen takes the popups along, so they stay over it — unless it is a part of
+  // this very popup (the video chat's panel): moving the popup into its own child cannot be done,
+  // and the Portal tearing it down to try took the panel out of full screen. A memo, so that the
+  // Portal moves only when the place changes: rebuilt in place, it did the same.
+  const portalMount = createMemo(() => {
+    const element = fullScreenElement();
+    return element && !popupElement()?.contains(element) ? element : capturedRoot;
+  });
   const [containerElement, setContainerElement] = createSignal<HTMLElement>();
   const [btnConfirmOnEnter, setBtnConfirmOnEnter] = createSignal<HTMLElement>();
 
@@ -407,7 +431,7 @@ const PopupElement = (props: {
 
   return (
     <PopupContext.Provider value={value}>
-      <Portal mount={fullScreenElement() || capturedRoot}>
+      <Portal mount={portalMount()}>
         <div
           ref={setPopupElement}
           class={classNames(
@@ -449,7 +473,7 @@ const PopupElement = (props: {
             }}
             role="dialog"
             aria-modal={withoutOverlay ? undefined : 'true'}
-            tabindex={-1}
+            tabindex={Modes.a11y ? -1 : undefined}
             class={classNames(
               'popup-container z-depth-1',
               props.containerClass,
@@ -599,7 +623,7 @@ PopupElement.Scrollable = (props: Parameters<typeof Scrollable>[0]) => {
   };
 
   onMount(() => {
-    if(!scrollElement) return;
+    if(!scrollElement || !Modes.a11y) return; // nothing to decide without the a11y layer
     decideFocusability();
     const observer = new MutationObserver(decideFocusability);
     observer.observe(scrollElement, {childList: true, subtree: true});
@@ -814,6 +838,20 @@ PopupElement.Buttons = (props: {
     </div>
   ));
 };
+
+/**
+ * Whether a modal popup is open over `element`: the top one has an overlay and
+ * does not hold it. The composer can still get the focus under one — given back
+ * after the key that sent the message — and the keys meant for the popup must
+ * not act on it. A popup on its way out, whose fade outlasts it, holds nothing.
+ */
+export function isUnderModalPopup(element: Element) {
+  let top: PopupContextValue;
+  for(let index = PopupElement.POPUPS.length - 1; index >= 0 && !top; --index) {
+    if(!PopupElement.POPUPS[index].destroyed) top = PopupElement.POPUPS[index];
+  }
+  return !!top && !top.withoutOverlay && !top.element?.contains(element);
+}
 
 PopupElement.getPopups = (popupKind: symbol) => {
   return PopupElement.POPUPS.filter((element) => {
