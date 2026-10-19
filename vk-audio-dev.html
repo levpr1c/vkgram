@@ -38,6 +38,9 @@
     .vk-news-dev-content { flex: 1 1 auto; overflow-y: auto; }
     .vk-news-dev-buttons { display: flex; gap: 8px; padding: 10px; }
     .vk-news-dev-buttons button { flex: 1; padding: 10px; }
+    /* реплика плеера: блок меню — на белой карточке, как в боковике */
+    .vk-news-dev-player { flex: 0 0 auto; }
+    .vk-news-dev-player-drawer { max-width: 340px; background: var(--vk-block-bg); }
   </style>
 </head>
 <body>
@@ -101,6 +104,51 @@
         </div>
       </div>
     </main>
+
+    <!-- плеер: полоса шапки (десктоп) и блок бокового меню (телефон) — точный DOM компонента,
+         часы идут, линия ползёт (см. vk-audio-dev.ts); перемотка по линии работает -->
+    <section class="vk-news-dev-player" aria-label="Реплика мини-плеера">
+      <header class="vk-header">
+        <div class="vk-header-inner">
+          <button type="button" class="vk-header-logo" aria-label="Новости">ВКГРАМ</button>
+          <div class="vk-header-spacer"></div>
+          <div class="vk-miniplayer" role="group" aria-label="Плеер">
+            <div class="vk-miniplayer-controls">
+              <button type="button" class="vk-miniplayer-button" aria-label="Предыдущий трек"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 2.5h1.8v11H2zM14 2.5v11L5.6 8z" fill="currentColor"></path></svg></button>
+              <button type="button" class="vk-miniplayer-button vk-miniplayer-toggle" aria-label="Пауза"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="is-pause" d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" fill="currentColor"></path><path class="is-play" d="M4 2.2v11.6L13.5 8z" fill="currentColor" hidden></path></svg></button>
+              <button type="button" class="vk-miniplayer-button" aria-label="Следующий трек"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M14 2.5h-1.8v11H14zM2 2.5v11L10.4 8z" fill="currentColor"></path></svg></button>
+            </div>
+            <div class="vk-miniplayer-info">
+              <span class="vk-miniplayer-title" title="бретелька 8bit демо.mp3">бретелька 8bit демо.mp3</span>
+              <span class="vk-miniplayer-meta">00:18</span>
+            </div>
+            <button type="button" class="vk-miniplayer-button vk-miniplayer-close" aria-label="Закрыть плеер"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+            <div class="vk-miniplayer-seek" role="slider" tabindex="0" aria-label="Позиция" aria-valuemin="0" aria-valuemax="124" aria-valuenow="18" style="--vk-miniplayer-progress: 14.5%">
+              <span class="vk-miniplayer-fill" style="width: 14.5%"></span>
+            </div>
+          </div>
+          <div class="vk-header-spacer"></div>
+        </div>
+      </header>
+
+      <div class="vk-news-dev-player-drawer">
+        <div class="vk-miniplayer is-drawer" role="group" aria-label="Плеер">
+          <div class="vk-miniplayer-controls">
+            <button type="button" class="vk-miniplayer-button" aria-label="Предыдущий трек"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 2.5h1.8v11H2zM14 2.5v11L5.6 8z" fill="currentColor"></path></svg></button>
+            <button type="button" class="vk-miniplayer-button vk-miniplayer-toggle" aria-label="Пауза"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path class="is-pause" d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" fill="currentColor"></path><path class="is-play" d="M4 2.2v11.6L13.5 8z" fill="currentColor" hidden></path></svg></button>
+            <button type="button" class="vk-miniplayer-button" aria-label="Следующий трек"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M14 2.5h-1.8v11H14zM2 2.5v11L10.4 8z" fill="currentColor"></path></svg></button>
+          </div>
+          <div class="vk-miniplayer-info">
+            <span class="vk-miniplayer-title" title="бретелька 8bit демо.mp3">бретелька 8bit демо.mp3</span>
+            <span class="vk-miniplayer-meta">00:18</span>
+          </div>
+          <button type="button" class="vk-miniplayer-button vk-miniplayer-close" aria-label="Закрыть плеер"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+          <div class="vk-miniplayer-seek" role="slider" tabindex="0" aria-label="Позиция" aria-valuemin="0" aria-valuemax="124" aria-valuenow="18" style="--vk-miniplayer-progress: 14.5%">
+            <span class="vk-miniplayer-fill" style="width: 14.5%"></span>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <div class="vk-news-dev-buttons">
       <button type="button" id="show-add">«Новая папка»</button>

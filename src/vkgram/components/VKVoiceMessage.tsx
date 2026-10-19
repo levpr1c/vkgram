@@ -42,7 +42,7 @@ export default function VKVoiceMessage(props: {message: Message.message}) {
   const isPlaying = () => isCurrent() && !playing()!.paused;
 
   // only the message that sounds reads the position of the player
-  const time = createPlaybackTime(() => isCurrent() ? playing() : undefined);
+  const [time] = createPlaybackTime(() => isCurrent() ? playing() : undefined);
   // the position of the player; set by a rewind too, so a paused message shows where it was rewound to
   const [position, setPosition] = createSignal(0);
   createEffect(on(time, (seconds) => setPosition(seconds)));

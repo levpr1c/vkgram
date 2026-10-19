@@ -9833,6 +9833,7 @@ html.is-vkgram.night .vk-voice {
 // * Mini player (`VKMiniPlayer`): in the desktop header and at the top of the mobile side menu
 
 .vk-miniplayer {
+  position: relative; // the seek line is laid over the player's bottom edge
   display: flex;
   align-items: center;
   gap: 2px;
@@ -9885,6 +9886,67 @@ html.is-vkgram.night .vk-voice {
     font-variant-numeric: tabular-nums;
   }
 
+  // ползунок: тонкая линия по нижнему краю плеера во всю его ширину — как у панели
+  // плеера; клик и протяжка перематывают, ← / → на сфокусированной линии двигают позицию
+  &-seek {
+    position: absolute;
+    right: 6px;
+    bottom: 0;
+    left: 6px;
+    height: 2px;
+    border-radius: 1px;
+    background-color: $vk-border;
+    cursor: pointer;
+    touch-action: none;
+
+    &:focus {
+      outline: none;
+    }
+
+    &:focus-visible {
+      outline: 1px solid $vk-blue;
+      outline-offset: 2px;
+    }
+
+    // выше линии — невидимая зона попадания: сами 2px трудно накрыть указателем; вниз линия
+    // не растёт, чтобы не ловить клики уже за пределами плеера (из-под шапки, у строк меню)
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -8px 0 0;
+    }
+
+    // бегунок на конце проигранной части — как у ползунка блока «Аудиозаписей»
+    &::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: var(--vk-miniplayer-progress, 0%);
+      width: 10px;
+      height: 10px;
+      margin: -5px 0 0 -5px;
+      border-radius: 50%;
+      background-color: $vk-blue-dark;
+      transform: scale(0);
+      transition: transform .12s;
+      pointer-events: none;
+    }
+
+    &:hover::after,
+    &:focus-visible::after,
+    &:active::after {
+      transform: scale(1);
+    }
+  }
+
+  &-fill {
+    display: block;
+    height: 100%;
+    border-radius: 1px;
+    background-color: $vk-blue;
+    pointer-events: none;
+  }
+
   // the top bar (desktop): at rest the player is part of the bar itself, no field of its own; under
   // the pointer (or with the focus inside) it takes the bar's whole height in the darker blue of
   // the search field, light text
@@ -9910,6 +9972,23 @@ html.is-vkgram.night .vk-voice {
     .vk-miniplayer-button:focus-visible {
       background-color: rgba(255, 255, 255, .18);
     }
+
+    // на синей полосе линия и бегунок — белые
+    .vk-miniplayer-seek {
+      background-color: rgba(255, 255, 255, .35);
+
+      &::after {
+        background-color: #fff;
+      }
+
+      &:focus-visible {
+        outline-color: rgba(255, 255, 255, .8);
+      }
+    }
+
+    .vk-miniplayer-fill {
+      background-color: #fff;
+    }
   }
 
   // the side menu (mobile): a light block under the profile header, in line
@@ -9920,6 +9999,12 @@ html.is-vkgram.night .vk-voice {
     padding: $vk-gap-small 12px $vk-gap-small;
     border-bottom: 1px solid $vk-divider;
     color: $vk-text;
+
+    // линия ложится на нижний край блока, перекрывая его разделитель на ширину плеера
+    .vk-miniplayer-seek {
+      right: 12px;
+      left: 12px;
+    }
 
     .vk-miniplayer-button {
       width: 36px;

@@ -3,6 +3,7 @@ import getAudioTitles from '@appManagers/utils/docs/getAudioTitles';
 import appMediaPlaybackController from '@components/appMediaPlaybackController';
 import createNowPlaying from '@/vkgram/hooks/createNowPlaying';
 import createPlaybackTime from '@/vkgram/hooks/createPlaybackTime';
+import createTrackScrub from '@/vkgram/hooks/createTrackScrub';
 import {formatAudioTitles, formatTime} from '@/vkgram/utils/audio';
 import VKIcon from '@/vkgram/components/VKIcons';
 
@@ -14,16 +15,23 @@ export type VKMiniPlayerProps = {
 
 /**
  * Mini player: previous / play-pause / next, the title of the track, «time • performer» and a
- * close button. Not drawn while nothing plays. There is no player of its own — it only drives
- * Web K's global one (`appMediaPlaybackController`); «✕» stops it.
+ * close button. Under it — a thin seek line across the player's whole width: a click or a drag
+ * on it (← / → on it) moves the position, like the slider of «Аудиозаписей». While dragging the
+ * line follows the pointer and the position commits once, on release. Not drawn while nothing
+ * plays. There is no player of its own — it only drives Web K's global one
+ * (`appMediaPlaybackController`); «✕» stops it.
  */
 export default function VKMiniPlayer(props: VKMiniPlayerProps) {
   const playing = createNowPlaying();
-  const time = createPlaybackTime(playing);
+  const [time, seekTo] = createPlaybackTime(playing);
 
   const titles = () => playing() && getAudioTitles(playing().doc);
   const title = () => titles()?.title || formatAudioTitles(playing().doc);
   const performer = () => titles()?.performer;
+
+  const duration = () => appMediaPlaybackController.getPlayingDetails()?.media?.duration || playing()?.doc?.duration || 0;
+  const scrub = createTrackScrub({time, seekTo, duration});
+  const progress = () => duration() ? Math.min(1, scrub.shownTime() / duration()) : 0;
 
   return (
     <Show when={playing()}>
@@ -74,7 +82,7 @@ export default function VKMiniPlayer(props: VKMiniPlayerProps) {
         <div class="vk-miniplayer-info">
           <span class="vk-miniplayer-title" title={title()}>{title()}</span>
           <span class="vk-miniplayer-meta">
-            {formatTime(time())}
+            {formatTime(scrub.shownTime())}
             <Show when={performer()}>{' • '}{performer()}</Show>
           </span>
         </div>
@@ -87,6 +95,32 @@ export default function VKMiniPlayer(props: VKMiniPlayerProps) {
         >
           <VKIcon name="close" size={14} />
         </button>
+
+        {/* ползунок: тонкая линия по нижнему краю плеера во всю его ширину */}
+        <div
+          class="vk-miniplayer-seek"
+          role="slider"
+          aria-label="Позиция"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration())}
+          aria-valuenow={Math.round(scrub.shownTime())}
+          style={{'--vk-miniplayer-progress': progress() * 100 + '%'}}
+          onPointerDown={scrub.onPointerDown}
+          onPointerMove={scrub.onPointerMove}
+          onPointerUp={scrub.onPointerFinish}
+          onPointerCancel={scrub.onPointerFinish}
+          onKeyDown={(event) => {
+            if(event.key === 'ArrowRight') {
+              event.preventDefault();
+              seekTo(time() + 5);
+            } else if(event.key === 'ArrowLeft') {
+              event.preventDefault();
+              seekTo(time() - 5);
+            }
+          }}
+        >
+          <span class="vk-miniplayer-fill" style={{width: progress() * 100 + '%'}} />
+        </div>
       </div>
     </Show>
   );

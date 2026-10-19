@@ -3,19 +3,21 @@ import getAudioTitles from '@appManagers/utils/docs/getAudioTitles';
 import appMediaPlaybackController from '@components/appMediaPlaybackController';
 import createNowPlaying from '@/vkgram/hooks/createNowPlaying';
 import createPlaybackTime from '@/vkgram/hooks/createPlaybackTime';
+import createTrackScrub from '@/vkgram/hooks/createTrackScrub';
 import {formatAudioTitles, formatDuration, formatTime} from '@/vkgram/utils/audio';
 import VKPlayGlyph from '@/vkgram/components/VKPlayGlyph';
 
 /**
  * The player block of «Аудиозаписи». The top row: previous / play-pause / next (the project's
  * square buttons), «исполнитель — название», shuffle and repeat. Under it the position slider with
- * both times; a click or a drag on it (← / → on it) moves the position. It has no player of its
+ * both times; a click or a drag on it (← / → on it) moves the position — while dragging the
+ * slider follows the pointer and the position commits once, on release. It has no player of its
  * own: it only drives Web K's global one (`appMediaPlaybackController`), the same one the rows of
  * every tab start.
  */
 export default function VKAudioPlayer() {
   const playing = createNowPlaying();
-  const time = createPlaybackTime(playing);
+  const [time, seekTo] = createPlaybackTime(playing);
 
   const [repeatState, setRepeatState] = createSignal(0); // 0=off, 1=all, 2=one
   const [shuffle, setShuffle] = createSignal(appMediaPlaybackController.shuffle);
@@ -23,26 +25,13 @@ export default function VKAudioPlayer() {
   const doc = () => playing()?.doc;
   const titles = () => getAudioTitles(doc());
   const duration = () => appMediaPlaybackController.getPlayingDetails()?.media?.duration || doc()?.duration || 0;
-  const progress = () => duration() ? Math.min(1, time() / duration()) : 0;
-
-  const seekFrom = (event: PointerEvent) => {
-    const media = appMediaPlaybackController.getPlayingDetails()?.media;
-    const total = media?.duration || duration();
-    if(!media || !total) return;
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    media.currentTime = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * total;
-  };
 
   const isIdle = () => !doc();
   // `paused` is undefined while nothing plays: that is not «playing»
   const isPlaying = () => !isIdle() && !playing()?.paused;
 
-  const seekBy = (delta: number) => {
-    const media = appMediaPlaybackController.getPlayingDetails()?.media;
-    const total = media?.duration || duration();
-    if(!media || !total) return;
-    media.currentTime = Math.max(0, Math.min(total, media.currentTime + delta));
-  };
+  const scrub = createTrackScrub({time, seekTo, duration, enabled: () => !isIdle()});
+  const progress = () => duration() ? Math.min(1, scrub.shownTime() / duration()) : 0;
 
   return (
     <div
@@ -154,7 +143,7 @@ export default function VKAudioPlayer() {
       </div>
 
       <div class="vk-audio-block-position">
-        <span class="vk-audio-block-time">{formatTime(time())}</span>
+        <span class="vk-audio-block-time">{formatTime(scrub.shownTime())}</span>
         <div
           class="vk-audio-block-seek"
           role="slider"
@@ -162,22 +151,19 @@ export default function VKAudioPlayer() {
           aria-label="Позиция"
           aria-valuemin={0}
           aria-valuemax={Math.round(duration())}
-          aria-valuenow={Math.round(time())}
+          aria-valuenow={Math.round(scrub.shownTime())}
           style={{'--vk-audio-progress': progress() * 100 + '%'}}
-          onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
-            seekFrom(event);
-          }}
-          onPointerMove={(event) => {
-            if(event.buttons & 1) seekFrom(event);
-          }}
+          onPointerDown={scrub.onPointerDown}
+          onPointerMove={scrub.onPointerMove}
+          onPointerUp={scrub.onPointerFinish}
+          onPointerCancel={scrub.onPointerFinish}
           onKeyDown={(event) => {
             if(event.key === 'ArrowRight') {
               event.preventDefault();
-              seekBy(5);
+              seekTo(time() + 5);
             } else if(event.key === 'ArrowLeft') {
               event.preventDefault();
-              seekBy(-5);
+              seekTo(time() - 5);
             }
           }}
         >
