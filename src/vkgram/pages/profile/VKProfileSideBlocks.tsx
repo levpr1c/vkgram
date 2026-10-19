@@ -1,4 +1,4 @@
-import {For, Show} from 'solid-js';
+import {createSignal, For, Show} from 'solid-js';
 import type {Chat, User} from '@layer';
 import {usePeers} from '@stores/peers';
 import {AvatarNewTsx} from '@components/avatarNew';
@@ -8,6 +8,7 @@ import {openVKChat} from '@/vkgram/pages/messages/openChat';
 import {openVKChannelPage} from '@/vkgram/pages/channel/openChannel';
 import useSubscribedChannels, {useSubscribedGroups} from '@/vkgram/hooks/useSubscribedChannels';
 import createCommonChats from '@/vkgram/hooks/createCommonChats';
+import VKGroupsModal from '@/vkgram/pages/profile/VKGroupsModal';
 
 const AVATAR_SIZE = 32;
 const LIMIT = 5;
@@ -92,16 +93,22 @@ export function VKProfileSubscriptions() {
 /** «Группы» — the groups the user is a member of (the same list as «Группы») */
 export function VKProfileGroups() {
   const {groups} = useSubscribedGroups();
+  const [showAll, setShowAll] = createSignal(false);
 
   return (
-    <MiniPeerBlock
-      title="Группы"
-      total={groups().length}
-      peers={groups().map((dialog) => ({peerId: dialog.peerId}))}
-      // there is no VKgram page of a group yet — the chat is what a group is (in VKgram's «Сообщения»)
-      onOpen={(peerId) => openVKChat(peerId)}
-      onShowAll={() => openVKSection('groups')}
-    />
+    <>
+      <MiniPeerBlock
+        title="Группы"
+        total={groups().length}
+        peers={groups().map((dialog) => ({peerId: dialog.peerId}))}
+        // there is no VKgram page of a group yet — the chat is what a group is (in VKgram's «Сообщения»)
+        onOpen={(peerId) => openVKChat(peerId)}
+        onShowAll={() => setShowAll(true)}
+      />
+      <Show when={showAll()}>
+        <VKGroupsModal peerIds={groups().map((dialog) => dialog.peerId)} onClose={() => setShowAll(false)} />
+      </Show>
+    </>
   );
 }
 

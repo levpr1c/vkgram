@@ -12548,6 +12548,17 @@ html.is-vkgram {
 }
 
 
+// * «Показать все» of the profile's «Группы» block (`VKGroupsModal`): the
+// * search stays put while the list scrolls under it, like in «Переслать».
+
+.vkgram {
+  .vk-groups-modal-list {
+    max-height: 340px;
+    overflow-y: auto;
+  }
+}
+
+
 // * Web K windows, eighth layer: the fixes and polish from the live round.
 // * 1. The gift stickers of the profile strip rendered at their natural size and
 // *    covered the page — they are clipped to the tile now.
