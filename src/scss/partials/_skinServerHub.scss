@@ -1,0 +1,795 @@
+@use "../shared" as *;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Windows 9x / NeXTSTEP skin for VKgram
+//
+// The theme layer puts `skin-serverhub` on <html> for the `serverhub` theme. VKgram's
+// own UI (`.vkgram`, styled by src/vkgram/styles/vk-base.scss) carries a token
+// layer, so re-pointing those tokens does most of the work; what follows them
+// are the shapes the tokens cannot reach: 2px bevels, hard offset shadows,
+// white sunken fields, square corners.
+//
+// Design tokens (nerevar-hub-test/frontend.md §3):
+//   desktop #008080 · gray #c0c0c0 · card #d4d0c8 · light #fff · mid #dfdfdf
+//   dark #808080 · black #222 · blue #000080 · title gradient → #1084d0
+//   text #111 · dim #444 · muted #a0a0a0 · line #ccc · surface #fff
+//   active #dedede · hover #e8e8e8 · ok #006400 · error #a00
+//   raised  = 2px solid #fff #222 #222 #fff + 2px 2px 0 #0005
+//   sunken  = 2px inset #fff, white fill
+//   pressed = inset edges, #dedede, bold
+//   font Tahoma/Verdana 13px, menus 12px, section headers 10px uppercase
+//
+// Telegram Web K's own screens keep the normal palette — only VKgram chrome is
+// touched here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+$w98-desktop: #008080;
+$w98-face: #c0c0c0;
+$w98-card: #d4d0c8;
+$w98-light: #ffffff;
+$w98-mid: #dfdfdf;
+$w98-dark: #808080;
+$w98-black: #222222;
+$w98-navy: #000060;
+$w98-blue: #000080;
+$w98-blue-2: #1084d0;
+$w98-text: #111111;
+$w98-dim: #444444;
+$w98-muted: #a0a0a0;
+$w98-line: #cccccc;
+$w98-surface: #ffffff;
+$w98-active: #dedede;
+$w98-hover: #e8e8e8;
+$w98-error: #aa0000;
+
+// A window, a panel, a menu: light top/left, near-black bottom/right, hard
+// offset shadow — never blurred.
+@mixin w98-raised($offset: true) {
+  border: 2px solid;
+  border-color: $w98-light $w98-black $w98-black $w98-light;
+  border-radius: 0;
+
+  @if $offset {
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, .33);
+  }
+}
+
+// A field pressed into the surface: the browser shades the edge itself.
+@mixin w98-sunken($fill: $w98-surface) {
+  border: 2px inset $w98-light;
+  background-color: $fill;
+  border-radius: 0;
+}
+
+// A control held down: the edges turn inside out, the face goes flat, the
+// label goes bold.
+@mixin w98-pressed {
+  border: 2px solid;
+  border-color: $w98-black $w98-light $w98-light $w98-black;
+  border-radius: 0;
+  background-color: $w98-active;
+  font-weight: 700;
+}
+
+// ── 1. Tokens ───────────────────────────────────────────────────────────────
+// VKgram reads almost every colour, radius and font through these. `.is-vkgram` is repeated
+// here on purpose: vk-base.scss declares the same tokens on `html.is-vkgram` (0,1,1), and the
+// two stylesheets' order is not ours to rely on — (0,2,1) always wins.
+
+html.skin-serverhub.is-vkgram {
+  --vk-blue: #{$w98-blue};
+  --vk-blue-dark: #{$w98-navy};
+  --vk-blue-rgb: 0, 0, 128;
+  --vk-link: #0000ff;
+  --vk-page-bg: #{$w98-desktop};
+  --vk-block-bg: #{$w98-face};
+  --vk-border: #{$w98-dark};
+  --vk-divider: #{$w98-dark};
+  --vk-hover-bg: #{$w98-hover};
+  --vk-text: #{$w98-text};
+  --vk-text-secondary: #{$w98-dim};
+  --vk-header-bg: #{$w98-blue};
+  --vk-header-hover: #{$w98-blue-2};
+  --vk-counter-bg: #{$w98-blue};
+  --vk-accent-soft: #{$w98-mid};
+  --vk-accent-soft-hover: #{$w98-card};
+  --vk-out-bg: #{$w98-surface};
+  --vk-out-border: #{$w98-dark};
+  --vk-danger: #{$w98-error};
+  --vk-shadow: none;
+  --vk-radius: 0;
+  --vk-font-family: Tahoma, Verdana, sans-serif;
+  --vk-font-size: 13px;
+}
+
+// ── 2. Page and blocks ──────────────────────────────────────────────────────
+// The teal desktop, grey windows on it, a white well for content.
+
+html.skin-serverhub {
+  .vkgram {
+    font-family: Tahoma, Verdana, sans-serif;
+    font-size: 13px;
+    color: $w98-text;
+  }
+
+  .vk-page {
+    padding: 7px;
+    background-color: $w98-desktop;
+  }
+
+  .vk-content {
+    background-color: $w98-face;
+  }
+
+  .vk-block,
+  .vk-page-block {
+    @include w98-raised;
+    background-color: $w98-face;
+  }
+
+  // a block inside a block is a group, not another window
+  .vk-block .vk-block,
+  .vk-block .vk-page-block {
+    box-shadow: none;
+  }
+
+  // A list of records is a white field inside its window.
+  .vk-settings-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    @include w98-sunken;
+  }
+
+  .vk-settings-list .vk-settings-item,
+  .vk-settings-session,
+  .vk-field-row {
+    border-radius: 0;
+  }
+
+  .vk-settings-list .vk-settings-item,
+  .vk-settings-session {
+    padding: 5px 9px;
+    border-bottom: 1px solid $w98-dark;
+
+    &:last-child {
+      border-bottom: 0;
+    }
+  }
+
+  // Rows of a settings panel sit on the card colour, divided by a dotted line.
+  .vk-block > .vk-settings-item + .vk-settings-item {
+    border-top: 1px dotted $w98-dark;
+  }
+}
+
+// ── 3. Header ───────────────────────────────────────────────────────────────
+// The bar is the window's title strip: navy, white, bold, square actions.
+
+html.skin-serverhub {
+  .vk-header {
+    background-color: $w98-blue;
+    color: $w98-light;
+    border-bottom: 2px solid $w98-black;
+    box-shadow: none;
+
+    .vk-header-inner {
+      padding: 0 9px;
+    }
+
+    .vk-header-logo {
+      color: $w98-light;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .vk-header-action {
+      color: $w98-light;
+      border-radius: 0;
+      font-size: 12px;
+
+      &:hover,
+      &:focus-visible {
+        background-color: $w98-blue-2;
+      }
+    }
+
+    .vk-header-search-input,
+    .vk-search {
+      font-size: 12px;
+      color: $w98-text;
+      @include w98-sunken;
+    }
+  }
+
+  .vk-header-account .vk-header-logo {
+    border-radius: 0;
+  }
+}
+
+// ── 4. Left menu ────────────────────────────────────────────────────────────
+// Flat items; the pointer paints a navy band.
+
+html.skin-serverhub {
+  .vk-sidebar-item {
+    min-height: 28px;
+    padding: 3px 7px;
+    gap: 7px;
+    border-radius: 0;
+    color: $w98-text;
+    font-size: 13px;
+
+    &::before {
+      display: none;
+    }
+
+    &:hover,
+    &:focus-visible {
+      background-color: $w98-blue;
+      color: $w98-light;
+
+      .vk-sidebar-item-icon,
+      .vk-sidebar-item-text,
+      .vk-sidebar-item-badge {
+        color: $w98-light;
+      }
+    }
+
+    &.is-active {
+      background-color: $w98-blue;
+      color: $w98-light;
+      font-weight: 700;
+
+      .vk-sidebar-item-icon {
+        color: $w98-light;
+      }
+    }
+  }
+
+  .vk-sidebar-item-icon {
+    color: $w98-dim;
+  }
+
+  .vk-sidebar-item-badge {
+    min-width: 18px;
+    height: 16px;
+    padding: 0 3px;
+    border: 1px solid $w98-light;
+    border-radius: 0;
+    background-color: $w98-blue;
+    color: $w98-light;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 14px;
+  }
+
+  .vk-sidebar-item.is-active .vk-sidebar-item-badge,
+  .vk-sidebar-item:hover .vk-sidebar-item-badge {
+    background-color: $w98-light;
+    color: $w98-blue;
+  }
+
+  .vk-sidebar-divider {
+    border-color: $w98-dark;
+  }
+
+  .vk-sidebar-footer {
+    border-top: 1px solid $w98-dark;
+  }
+}
+
+// ── 5. Buttons and tabs ─────────────────────────────────────────────────────
+
+html.skin-serverhub {
+  .vk-button,
+  .vk-button-secondary,
+  .vk-button-danger {
+    min-height: 23px;
+    padding: 3px 9px;
+    border: 2px outset $w98-light;
+    border-radius: 0;
+    background-color: $w98-face;
+    color: $w98-text;
+    font-size: 12px;
+    box-shadow: none;
+
+    &:hover:not(:disabled) {
+      background-color: $w98-hover;
+    }
+
+    &:active:not(:disabled) {
+      @include w98-pressed;
+    }
+  }
+
+  .vk-button {
+    border-color: $w98-light $w98-navy $w98-navy $w98-light;
+    background-color: $w98-blue;
+    color: $w98-light;
+    font-weight: 700;
+
+    &:hover:not(:disabled) {
+      background-color: #0000a0;
+    }
+  }
+
+  .vk-button-secondary {
+    font-weight: 400;
+  }
+
+  .vk-button-danger {
+    color: $w98-error;
+  }
+
+  .vk-link-button {
+    color: $w98-blue;
+    font-size: 12px;
+  }
+
+  .vk-tabs {
+    border-bottom: 1px solid $w98-dark;
+  }
+
+  .vk-tab {
+    padding: 3px 9px;
+    border-radius: 0;
+    color: $w98-text;
+    font-size: 12px;
+
+    &:hover {
+      background-color: $w98-hover;
+    }
+
+    &.is-active {
+      border-bottom-color: $w98-black;
+      color: $w98-text;
+      font-weight: 700;
+    }
+  }
+}
+
+// ── 6. Fields, checkboxes, settings ─────────────────────────────────────────
+
+html.skin-serverhub {
+  .vk-input,
+  .vk-textarea,
+  .vk-select,
+  .vk-search {
+    padding: 5px 7px;
+    border: 2px inset $w98-light;
+    border-radius: 0;
+    background-color: $w98-surface;
+    color: $w98-text;
+    font-size: 12px;
+    outline: none;
+
+    &:focus {
+      border-color: $w98-light;
+      outline: 1px dotted $w98-black;
+      outline-offset: -5px;
+    }
+
+    &::placeholder {
+      color: $w98-muted;
+    }
+  }
+
+  .vk-field-row label {
+    color: $w98-dim;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  // Native boxes, in the system accent — no rounding on them either.
+  .vk-settings-radio,
+  .vk-settings-checkbox {
+    font-size: 12px;
+    padding: 3px 0;
+
+    input {
+      accent-color: $w98-blue;
+      margin: 0 3px 0 0;
+    }
+  }
+
+  .vk-settings-legend,
+  .vk-settings-caption {
+    margin-bottom: 5px;
+    color: $w98-blue;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+
+  .vk-settings-fieldset {
+    margin-bottom: 9px;
+  }
+
+  .vk-settings-status {
+    padding: 0 3px;
+    border: 1px solid $w98-dark;
+    border-radius: 0;
+    font-size: 10px;
+    font-weight: 400;
+  }
+}
+
+// ── 7. Text ─────────────────────────────────────────────────────────────────
+// 13 body, 12 secondary and menus, 10 uppercase headers.
+
+html.skin-serverhub {
+  .vk-page-text {
+    font-size: 13px;
+  }
+
+  .vk-page-text-secondary,
+  .vk-text-secondary {
+    font-size: 12px;
+    color: $w98-dim;
+  }
+
+  .vk-page-title {
+    margin-bottom: 5px;
+    color: $w98-blue;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .vk-block-title {
+    margin-bottom: 5px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid $w98-dark;
+    color: $w98-blue;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+
+  .vk-settings-caption,
+  .vk-page-text-secondary {
+    line-height: 1.35;
+  }
+}
+
+// ── 8. Composer ─────────────────────────────────────────────────────────────
+// A raised grey panel with a white field and square buttons in it.
+
+html.skin-serverhub {
+  .vk-composer {
+    padding: 5px 7px;
+    border-top: 2px solid $w98-dark;
+    background-color: $w98-face;
+  }
+
+  .vk-composer-input {
+    padding: 5px 7px;
+    min-height: 28px;
+    @include w98-sunken;
+    color: $w98-text;
+    font-size: 13px;
+    outline: none;
+
+    &:focus {
+      border-color: $w98-light;
+      outline: 1px dotted $w98-black;
+      outline-offset: -5px;
+    }
+  }
+
+  .vk-composer-btn {
+    width: 26px;
+    height: 26px;
+    border: 2px outset $w98-light;
+    border-radius: 0;
+    background-color: $w98-face;
+    color: $w98-text;
+    font-size: 14px;
+
+    &:hover:not(:disabled) {
+      background-color: $w98-hover;
+      color: $w98-text;
+    }
+
+    &.is-active {
+      background-color: $w98-active;
+      color: $w98-text;
+    }
+
+    &:active {
+      @include w98-pressed;
+    }
+  }
+
+  .vk-composer-send {
+    background-color: $w98-blue;
+    color: $w98-light;
+
+    &:hover:not(:disabled) {
+      background-color: $w98-navy;
+      color: $w98-light;
+    }
+  }
+
+  // The message row of a dialog list, and its selection.
+  .vk-message-dialog {
+    padding: 5px 9px;
+    border-bottom: 1px solid $w98-line;
+    border-radius: 0;
+
+    &:hover {
+      background-color: $w98-blue;
+
+      .vk-message-dialog-title,
+      .vk-message-dialog-preview,
+      .vk-message-dialog-time,
+      .vk-message-dialog-meta {
+        color: $w98-light;
+      }
+    }
+  }
+
+  .vk-message-dialog-title {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .vk-message-dialog-preview,
+  .vk-message-dialog-time {
+    font-size: 12px;
+    color: $w98-dim;
+  }
+
+  .vk-message-dialog-unread {
+    border-radius: 0;
+    background-color: $w98-blue;
+    color: $w98-light;
+    font-size: 10px;
+  }
+}
+
+// ── 9. Windows: modals, account menu ────────────────────────────────────────
+// Grey plate, bevelled, with the hard offset shadow. The head is a navy strip.
+
+html.skin-serverhub {
+  .vk-modal {
+    @include w98-raised;
+    background-color: $w98-face;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, .33);
+    color: $w98-text;
+  }
+
+  .vk-modal-head {
+    margin: 3px 3px 0;
+    padding: 3px 7px;
+    border-bottom: 0;
+    background-color: $w98-blue;
+    color: $w98-light;
+  }
+
+  .vk-modal-title {
+    color: $w98-light;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .vk-modal-head .btn-icon {
+    width: 20px;
+    height: 18px;
+    min-width: 20px;
+    padding: 0;
+    border: 2px outset $w98-light;
+    border-radius: 0;
+    background-color: $w98-face;
+    color: $w98-text;
+    font-size: 11px;
+
+    &:active {
+      @include w98-pressed;
+    }
+  }
+
+  .vk-modal-body {
+    margin: 3px;
+    padding: 7px;
+    background-color: $w98-surface;
+    color: $w98-text;
+    @include w98-sunken;
+  }
+
+  .vk-modal-foot {
+    padding: 3px;
+    background-color: $w98-face;
+  }
+
+  .vk-account-menu {
+    @include w98-raised;
+    background-color: $w98-face;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, .33);
+  }
+
+  .vk-account-menu-head {
+    padding-bottom: 3px;
+    border-bottom: 1px solid $w98-dark;
+  }
+
+  .vk-account-menu-title {
+    color: $w98-blue;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .vk-account-menu-item {
+    border-radius: 0;
+    font-size: 12px;
+
+    &:hover,
+    &.is-active {
+      background-color: $w98-blue;
+      color: $w98-light;
+
+      .vk-account-menu-name,
+      .vk-account-menu-item-icon {
+        color: $w98-light;
+      }
+    }
+  }
+}
+
+// ── 10. The login (start) page ──────────────────────────────────────────────
+// VKgram's first screen: two windows on the teal desktop.
+
+html.skin-serverhub {
+  .vk-login-box,
+  .vk-login-info,
+  .vk-login-links {
+    @include w98-raised;
+    background-color: $w98-face;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, .33);
+  }
+
+  .vk-login-box-body,
+  .vk-login-info-head {
+    padding: 7px 9px;
+  }
+
+  .vk-login-info-title {
+    margin-bottom: 5px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .vk-login-info-lead {
+    margin-top: 3px;
+    color: $w98-dim;
+    font-size: 12px;
+  }
+
+  .vk-login-box-body .vk-auth-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: $w98-text;
+  }
+
+  .vk-login-box-body .vk-auth-subtitle,
+  .vk-login-info-note,
+  .vk-login-info-feature-text {
+    color: $w98-dim;
+    font-size: 12px;
+  }
+
+  .vk-login-box-body .vk-auth-header {
+    padding-bottom: 5px;
+    border-bottom: 1px solid $w98-dark;
+  }
+
+  // the flow's fields (Web K's `.input-field` inside VK's window)
+  .vk-login-box .input-field,
+  .vk-login-box .input-field-input,
+  .vk-login-box .input-select {
+    border-radius: 0 !important;
+    background-color: $w98-surface;
+    color: $w98-text;
+    box-shadow: none;
+  }
+
+  .vk-login-box .input-field,
+  .vk-login-box .input-select {
+    border: 2px inset $w98-light;
+  }
+
+  .vk-login-box .input-field > label {
+    background-color: $w98-surface;
+    color: $w98-dim;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  // the feature rows: a dotted rule and a sunken icon tile
+  .vk-login-info-feature {
+    padding: 7px 0;
+    border-bottom: 1px dotted $w98-dark;
+    border-radius: 0;
+  }
+
+  .vk-login-tile {
+    border: 2px inset $w98-light;
+    border-radius: 0;
+    background-color: $w98-surface;
+    color: $w98-blue;
+  }
+
+  .vk-login-info-stats-head {
+    color: $w98-blue;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+
+  .vk-login-info-stats-line,
+  .vk-login-info-stat {
+    font-size: 12px;
+  }
+
+  .vk-login-info-stat {
+    color: $w98-blue;
+    font-weight: 700;
+  }
+
+  .vk-login-links-row {
+    padding: 5px 9px;
+    border-bottom: 1px dotted $w98-dark;
+    border-radius: 0;
+
+    &:last-child {
+      border-bottom: 0;
+    }
+
+    &:hover {
+      background-color: $w98-hover;
+    }
+  }
+
+  // The sign-in flow's own buttons (Web K classes inside VK's window): VK's
+  // login skin outranks the shared rules, so its hook is matched by name.
+  .vk-login-box .auth-card .btn-primary,
+  .vk-login-box .auth-card .btn-primary[data-vk-cta] {
+    height: 24px !important;
+    min-height: 24px;
+    margin: 0 !important;
+    padding: 0 9px;
+    border: 2px solid !important;
+    border-color: $w98-light $w98-navy $w98-navy $w98-light !important;
+    border-radius: 0 !important;
+    background-color: $w98-blue !important;
+    color: $w98-light !important;
+    box-shadow: none !important;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 20px;
+  }
+
+  .vk-login-box .auth-card .btn-primary:hover,
+  .vk-login-box .auth-card .btn-primary[data-vk-qr-link]:hover {
+    background-color: #0000a0 !important;
+  }
+
+  .vk-login-box .auth-card .btn-primary:active {
+    @include w98-pressed;
+    color: $w98-text !important;
+  }
+
+  // The QR half of the split control draws its label through a `::before`, so
+  // it only loses its corners here.
+  .vk-login-box .auth-card .btn-primary[data-vk-qr-link] {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+
+    &:active {
+      background-color: $w98-active !important;
+    }
+  }
+}

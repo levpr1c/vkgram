@@ -1,4 +1,6 @@
 import {JSX} from 'solid-js';
+import {ICONS_9X} from '@/vkgram/assets/icons9x';
+import useServerHubSkin from '@/vkgram/hooks/useServerHubSkin';
 
 /**
  * VKgram's own section icons — thin line glyphs at home in the old VK left
@@ -82,7 +84,7 @@ export type VKIconName =
   | 'activity'
   | 'objects';
 
-const ICONS: {[name in VKIconName]: () => JSX.Element} = {
+export const ICONS: {[name in VKIconName]: () => JSX.Element} = {
   chevron: () => <path d="m9 5 7 7-7 7" />,
   profile: () => (
     <>
@@ -567,20 +569,37 @@ const ICONS: {[name in VKIconName]: () => JSX.Element} = {
 };
 
 export default function VKIcon(props: {name: VKIconName, size?: number, class?: string}) {
+  const isServerHub = useServerHubSkin();
+  const pixelIcon = () => isServerHub() && ICONS_9X[props.name];
+
   return (
-    <svg
-      class={props.class}
-      width={props.size ?? 18}
-      height={props.size ?? 18}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.8"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      {ICONS[props.name]()}
-    </svg>
+    <>
+      {pixelIcon() ? (
+        <img
+          src={pixelIcon()}
+          width={props.size ?? 16}
+          height={props.size ?? 16}
+          alt=""
+          aria-hidden="true"
+          class={props.class}
+          style="image-rendering:pixelated"
+        />
+      ) : (
+        <svg
+          class={props.class}
+          width={props.size ?? 18}
+          height={props.size ?? 18}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          {ICONS[props.name]()}
+        </svg>
+      )}
+    </>
   );
 }

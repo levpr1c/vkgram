@@ -12,6 +12,7 @@ import VKSettingsSessions from '@/vkgram/pages/settings/VKSettingsSessions';
 import VKSettingsConfig from '@/vkgram/pages/settings/VKSettingsConfig';
 import VKSettingsMobileNav from '@/vkgram/pages/settings/VKSettingsMobileNav';
 import VKSettingsSidebarMenu from '@/vkgram/pages/settings/VKSettingsSidebarMenu';
+import VKSettingsAppearance from '@/vkgram/pages/settings/VKSettingsAppearance';
 import VKSettingsAutoDownload from '@/vkgram/pages/settings/VKSettingsAutoDownload';
 import {openVKCacheLimit} from '@/vkgram/components/VKCacheLimitModal';
 import VKSettingsStorage from '@/vkgram/pages/settings/VKSettingsStorage';
@@ -171,6 +172,12 @@ const CATEGORIES: VKSettingCategory[] = [{
   group: 'telegram',
   items: [],
   content: VKSettingsLanguage
+}, {
+  id: 'appearance',
+  title: 'Оформление',
+  group: 'vkgram',
+  items: [],
+  content: VKSettingsAppearance
 }, {
   id: 'navbar',
   title: 'Навбар',

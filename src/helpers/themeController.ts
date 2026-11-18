@@ -186,6 +186,29 @@ const colorMap: {
     'secondary-color': '#C4C9CC',
     'link-color': '#238AE3', // windowBackgroundWhiteBlueText
     'input-search-background-color': '#FFFFFF'
+  },
+  serverhub: {
+    // The Server Hub skin paints VKgram, not Telegram. So this palette stays the ordinary light
+    // one — Web K's own screens (chat list, a conversation, its popups) must look exactly as they
+    // do on `day`, which is what "the original Telegram look" means here. The Windows 98 colours
+    // are therefore NOT in this map: they live in `scss/partials/_skinServerHub.scss`, scoped to
+    // `.vkgram` (tokens + a scoped copy of these variables), so nothing outside VKgram picks them
+    // up. Keep this entry in step with `day` if that one changes.
+    'primary-color': '#3390ec',
+    'message-out-primary-color': '#5CA853',
+    'message-background-color': '#ffffff',
+    'surface-color': '#ffffff',
+    'danger-color': '#df3f40',
+    'primary-text-color': '#000000',
+    'secondary-text-color': '#707579',
+    'saved-color': '#359AD4',
+    'green-color': '#70b768',
+    'background-color': '#f4f4f5',
+    'body-background-color': '#ffffff',
+    'border-color': '#dfe1e5',
+    'secondary-color': '#c4c9cc',
+    'link-color': '#00488f',
+    'input-search-background-color': '#ffffff'
   }
 };
 
@@ -193,12 +216,20 @@ const themeNameToBaseTheme: {[name in Exclude<AppTheme['name'], 'system'>]: Base
   day: 'baseThemeClassic',
   night: 'baseThemeNight',
   light: 'baseThemeDay',
-  tinted: 'baseThemeTinted'
+  tinted: 'baseThemeTinted',
+  serverhub: 'baseThemeClassic'
 };
 
 const NIGHT_THEME_NAMES = new Set<AppTheme['name']>(['night', 'tinted']);
 
 const log = logger('THEME');
+
+// Which theme the user asked for, mirrored onto <html> so it is shared by every ThemeController
+// instance. During a hot reload the app can hold two instances over two settings stores, and one
+// whose store lags a write resolves the previous theme and would strip the skin class right after
+// the other set it. The DOM is the one state both of them see.
+const THEME_NAME_DATA_KEY = 'themeName';
+const serverHubThemeName: AppTheme['name'] = 'serverhub';
 
 export class ThemeController {
   private themeColor: string;
@@ -231,10 +262,11 @@ export class ThemeController {
         return;
       }
       if(key !== themeKey) return;
+      document.documentElement.dataset[THEME_NAME_DATA_KEY] = value === 'system' ? '' : String(value);
       const [, setAppSettings] = useAppSettings();
       if(value === 'night' || value === 'tinted') {
         setAppSettings('lastThemeNames', 'dark', value);
-      } else if(value === 'day' || value === 'light') {
+      } else if(value === 'day' || value === 'light' || value === 'serverhub') {
         setAppSettings('lastThemeNames', 'light', value);
       }
       // 'system' — don't update either side; burger-menu toggle still falls back to the
@@ -330,14 +362,21 @@ export class ThemeController {
   public _setTheme(silent?: boolean) {
     const _log = log.bindPrefix('setTheme');
     _log(`set colors, silent=${silent}`);
-    const isNight = this.isNight();
+    // One lookup for the whole pass: the resolved theme drives the night class, the serverhub skin
+    // class and the applied colors.
+    const theme = this.getTheme();
+    const isNight = this.isNightThemeName(theme?.name);
     const colorScheme = document.head.querySelector('[name="color-scheme"]');
     colorScheme?.setAttribute('content', isNight ? 'dark' : 'light');
 
     document.documentElement.classList.toggle('night', isNight);
+    const requestedName = document.documentElement.dataset[THEME_NAME_DATA_KEY] as AppTheme['name'];
+    document.documentElement.classList.toggle(
+      'skin-serverhub',
+      (requestedName || theme?.name) === serverHubThemeName
+    );
     document.documentElement.classList.toggle('high-contrast', this.isHighContrast());
     this.setThemeColor();
-    const theme = this.getTheme();
     this.applyTheme(theme);
 
     let style = this.styleElement;
@@ -490,6 +529,16 @@ export class ThemeController {
         (last?.dark ?? 'night');
     }
     await setAppSettings('theme', name);
+    // The skin class follows the REQUEST, before the event. `_setTheme` sets it again from the
+    // theme it resolves, but during a hot reload the app can end up with two ThemeController
+    // instances and two settings stores: the one whose store lagged a write resolved the old name
+    // and stripped the class right after the other set it, which looked like "switching to Server
+    // Hub does nothing". Toggling here makes the click itself authoritative; the resolved pass
+    // still corrects the class for `system`.
+    document.documentElement.dataset[THEME_NAME_DATA_KEY] = name === 'system' ? '' : name;
+    if(name !== 'system') {
+      document.documentElement.classList.toggle('skin-serverhub', name === serverHubThemeName);
+    }
     rootScope.dispatchEvent('theme_change', coordinates);
   }
 
@@ -509,9 +558,18 @@ export class ThemeController {
 
   public getTheme(name: AppTheme['name'] = this.getResolvedThemeName()) {
     const [appSettings] = useAppSettings();
+    // `systemTheme` is filled in by setThemeListener; a render that lands before it (the login
+    // page's background does) asks for an undefined name, which would resolve to no theme at all.
+    if(!name) return SETTINGS_INIT.themes.find((t) => t.name === 'day');
     // appSettings is still empty early in the boot (the login page): fall through to SETTINGS_INIT
-    return appSettings.themes?.find((t) => t.name === name) ??
-      SETTINGS_INIT.themes.find((t) => t.name === name);
+    const stored = appSettings.themes?.find((t) => t.name === name);
+    // A stored entry can be unusable: it may have been written before this build bundled the theme
+    // (the state validator skips `settings.themes`, so old arrays survive an upgrade as they are),
+    // or saved without its per-base settings. Anything without settings cannot be applied —
+    // getThemeSettings() returns undefined and callers dereference it — so prefer the bundled
+    // definition for that name over the stored one.
+    if(stored?.settings) return stored;
+    return SETTINGS_INIT.themes.find((t) => t.name === name) ?? stored;
   }
 
   private getThemeName(theme: Theme | AppTheme): AppTheme['name'] {
@@ -763,7 +821,15 @@ export class ThemeController {
     const themes = appSettings.themes.slice();
     let idx = themes.indexOf(theme);
     if(idx < 0) idx = themes.findIndex((t) => t.name === theme.name);
-    if(idx < 0) return Promise.resolve();
+    if(idx < 0) {
+      // A bundled theme can be absent from the stored array (loadState skips validating
+      // `settings.themes`, so a state saved before the theme shipped has only the older entries) —
+      // getTheme() then serves the SETTINGS_INIT entry. Materialise it so the pick has somewhere
+      // to land instead of being dropped.
+      const bundled = SETTINGS_INIT.themes.find((t) => t.name === theme.name);
+      if(!bundled) return Promise.resolve();
+      idx = themes.push({...bundled}) - 1;
+    }
 
     const t = themes[idx];
     let settings: AppTheme['settings'];

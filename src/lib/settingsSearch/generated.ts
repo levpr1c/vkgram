@@ -209,6 +209,7 @@ const generated: GeneratedSettingsSearchData = {
     {id: 'AppGeneralSettingsTab:ThemeDay', sectionId: 'AppGeneralSettingsTab', kind: 'option', titleLangKey: 'ThemeDay'},
     {id: 'AppGeneralSettingsTab:ThemeLight', sectionId: 'AppGeneralSettingsTab', kind: 'option', titleLangKey: 'ThemeLight'},
     {id: 'AppGeneralSettingsTab:ThemeNight', sectionId: 'AppGeneralSettingsTab', kind: 'option', titleLangKey: 'ThemeNight'},
+    {id: 'AppGeneralSettingsTab:ThemeServerHub', sectionId: 'AppGeneralSettingsTab', kind: 'option', titleLangKey: 'ThemeServerHub'},
     {id: 'AppGeneralSettingsTab:ThemeTinted', sectionId: 'AppGeneralSettingsTab', kind: 'option', titleLangKey: 'ThemeTinted'},
     {id: 'AppIncludedChatsTab:ChatList.Filter.Archive', sectionId: 'AppIncludedChatsTab', kind: 'row', titleLangKey: 'ChatList.Filter.Archive'},
     {id: 'AppIncludedChatsTab:ChatList.Filter.Bots', sectionId: 'AppIncludedChatsTab', kind: 'row', titleLangKey: 'ChatList.Filter.Bots'},

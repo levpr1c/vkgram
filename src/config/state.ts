@@ -45,7 +45,10 @@ export type AppThemeSettings = Modify<ThemeSettings, {
 }>;
 
 export type AppTheme = Modify<Theme, {
-  name: 'day' | 'night' | 'light' | 'tinted' | 'system',
+  // `serverhub` is the bundled Windows 95/98 skin: a light palette that also puts `skin-serverhub` on
+  // <html> (see themeController._setTheme), which src/scss/partials/_skinServerHub.scss reads for the
+  // bevels, square corners and system font the palette alone cannot express.
+  name: 'day' | 'night' | 'light' | 'tinted' | 'serverhub' | 'system',
   settings?: Array<AppThemeSettings>
 }>;
 
@@ -105,7 +108,7 @@ export type StateSettings = {
   // settings.theme changes; radios/UI / `switchTheme(name)` direct calls feed it.
   lastThemeNames: {
     dark: Extract<AppTheme['name'], 'night' | 'tinted'>,
-    light: Extract<AppTheme['name'], 'day' | 'light'>
+    light: Extract<AppTheme['name'], 'day' | 'light' | 'serverhub'>
   },
   // Empty-column tip cards (@components/chatTips): which tip is showing, and whether the deck is
   // collapsed to the "select a chat" pill. macOS keeps the same collapse in FastSettings.emptyTips.
@@ -452,6 +455,34 @@ const makeDefaultAppTheme = (name: AppTheme['name']): AppTheme => {
   };
 };
 
+// The bundled Windows 95/98 skin. Classic (light) base, title-bar navy as the accent, and no
+// wallpaper — a serverhub client is flat: the chat sits on the plain grey/sunken field the palette
+// paints, so a pattern wallpaper would fight the look. The rest of the skin (bevels, square
+// corners, system font) is CSS keyed off the `skin-serverhub` class this theme's name puts on <html>.
+const makeServerHubAppTheme = (): AppTheme => {
+  const theme = makeDefaultAppTheme('serverhub');
+  theme.settings = [{
+    _: 'themeSettings',
+    pFlags: {},
+    base_theme: {_: 'baseThemeClassic'},
+    accent_color: 0x000080,
+    message_colors: [0x000080],
+    wallpaper: {
+      _: 'wallPaperNoFile',
+      id: '',
+      pFlags: {default: true},
+      settings: {
+        _: 'wallPaperSettings',
+        pFlags: {},
+        intensity: 0,
+        background_color: 0xc0c0c0
+      }
+    },
+    highlightingColor: 'hsla(60, 100%, 50%, .4)'
+  }];
+  return theme;
+};
+
 export const SETTINGS_INIT: StateSettings = {
   messagesTextSize: 16,
   distanceUnit: 'kilometers',
@@ -504,7 +535,8 @@ export const SETTINGS_INIT: StateSettings = {
     makeDefaultAppTheme('day'),
     makeDefaultAppTheme('night'),
     makeDefaultAppTheme('tinted'),
-    makeDefaultAppTheme('light')
+    makeDefaultAppTheme('light'),
+    makeServerHubAppTheme()
   ],
   theme: 'system',
   increaseContrast: false,

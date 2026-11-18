@@ -111,6 +111,7 @@ const THEME_VARIANTS: [StateSettings['theme'], LangPackKey][] = [
   ['night', 'ThemeNight'],
   ['light', 'ThemeLight'],
   ['tinted', 'ThemeTinted'],
+  ['serverhub', 'ThemeServerHub'],
   ['system', 'AutoNightSystemDefault']
 ];
 

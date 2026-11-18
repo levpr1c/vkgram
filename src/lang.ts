@@ -2582,6 +2582,7 @@ const lang = {
   'ThemeNight': 'Night',
   'ThemeLight': 'Day',
   'ThemeTinted': 'Dark',
+  'ThemeServerHub': 'Server Hub',
   'AutoNightSystemDefault': 'System Default',
   'GlobalAttachPlainRestricted': 'Sending text messages isn\'t allowed in this group.',
   'GlobalAttachDocumentsRestricted': 'Sending documents isn\'t allowed in this group.',
